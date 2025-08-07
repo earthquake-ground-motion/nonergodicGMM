@@ -244,6 +244,9 @@ class DatastoreByEvent():
                 record_metadata["location"] = record.location
                 record_metadata["channel"] = record.channel
                 ntw_stn = ".".join([record.network, record.station])
+                record_metadata["station_id"] = ".".join(
+                    [record.network, record.station, record.location, record.channel]
+                )
                 record_metadata["station_longitude"] = handler.stations[ntw_stn]["lon"]
                 record_metadata["station_latitude"] = handler.stations[ntw_stn]["lat"]
                 record_metadata["station_elevation"] = handler.stations[ntw_stn]["elevation"]
