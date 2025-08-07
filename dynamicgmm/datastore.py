@@ -244,6 +244,9 @@ class DatastoreByEvent():
                 record_metadata["location"] = record.location
                 record_metadata["channel"] = record.channel
                 ntw_stn = ".".join([record.network, record.station])
+                record_metadata["station_id"] = ".".join(
+                    [record.network, record.station, record.location, record.channel]
+                )
                 record_metadata["station_longitude"] = handler.stations[ntw_stn]["lon"]
                 record_metadata["station_latitude"] = handler.stations[ntw_stn]["lat"]
                 record_metadata["station_elevation"] = handler.stations[ntw_stn]["elevation"]
@@ -251,11 +254,8 @@ class DatastoreByEvent():
                 if record.h1.metadata is not None:
                     for key_in, key_out in handler.FLATFILE_MAPPING.items():
                         record_metadata[key_out] = record.h1.metadata[key_in]
-                record_metadata["record_id"] = "|".join([
-                    event_id,
-                    ".".join([record.network, record.station, record.location, record.channel])
-                    ]
-                )
+                record_metadata["record_id"] = "|".join([event_id,
+                                                         record_metadata["station_id"]])
                 metadata.append(record_metadata)
         metadata = pd.DataFrame(metadata)
         if metadata.duplicated("record_id").any():
