@@ -266,6 +266,14 @@ class Grid3D(object):
 class Flatfile():
     """
     """
+    SOURCE_HEADERS = ["event_id", "event_time", "event_longitude", "event_latitude",
+                      "event_hypo_depth", "event_origin_author", "event_preferred_mag",
+                      "event_preferred_mag_type", "event_preferred_mag_author",]
+    DISTANCE_HEADERS = ["repi", "rhypo", "rjb", "rrup", "rx", "ry0",]
+    SITE_HEADERS = ["station_id", "network", "station", "location", "channel",
+                    "station_longitude", "station_latitude", "station_elevation",
+                    "station_depth", "vs30", "vs30_geology", "vs30_vs_profile",]
+
     def __init__(self,
         flatfile: pd.DataFrame,
         cartesian_crs: str = "EPSG:3035",
@@ -331,7 +339,7 @@ class Flatfile():
             (ssn, i) for i, ssn in enumerate(pd.unique(flatfile["station_id"]).tolist())
             ])
         self.rsn_mapping = dict([
-            (rsn, i) for i, rsn in enumerate(flatfile["gmid"].to_list())
+            (rsn, i) for i, rsn in enumerate(flatfile["record_id"].to_list())
             ])
         self.eqids = list(self.eqid_mapping) # [val for key, val in self.eqid_mapping.items()]
         self.ssns = list(self.ssn_mapping) # [val for key, val in self.ssn_mapping.items()]
@@ -344,8 +352,8 @@ class Flatfile():
             "eqid": np.zeros(self.nrec, dtype=int),
             "ssn": np.zeros(self.nrec, dtype=int)
             }
-        for i, row in flatfile[["event_id", "station_id", "gmid"]].iterrows():
-            self.identifiers["rsn"][i] = self.rsn_mapping[row.gmid]
+        for i, row in flatfile[["event_id", "station_id", "record_id"]].iterrows():
+            self.identifiers["rsn"][i] = self.rsn_mapping[row.record_id]
             self.identifiers["eqid"][i] = self.eqid_mapping[row.event_id]
             self.identifiers["ssn"][i] = self.ssn_mapping[row.station_id]
         self.identifiers = pd.DataFrame(self.identifiers)
@@ -355,7 +363,7 @@ class Flatfile():
         """Defines the point representing the earthquake position in the
         path grid - assuming a hypocenter
         """
-        eqz = self.data["event_depth"].to_numpy()
+        eqz = self.data["event_hypo_depth"].to_numpy()
         # Zero depths lead to errors in the distance matrix, so these
         # should be rendered to a default reference depth
         eqz[np.isclose(eqz, 0.0)] = self.default_depth
@@ -386,7 +394,7 @@ class Flatfile():
         output["eqZ"] = self.eqz
         output["staX"] = self.ssx * fct
         output["staY"] = self.ssy * fct
-        output["rsn_orig"] = self.data["gmid"].copy()
+        output["rsn_orig"] = self.data["record_id"].copy()
         output["eqid_orig"] = self.data["event_id"].copy()
         output["ssn_orig"] = self.data["station_id"].copy()
         output["event_time"] = self.data["event_time"].copy()
@@ -417,6 +425,16 @@ class Flatfile():
             output.to_csv(fname, sep=",", index=False)
         return output
 
+    def event_catalogue(self):
+        """Returns just the event catalogue as a dataframe
+        """
+        event_cat = self.data[self.SOURCE_HEADERS].copy()
+        event_cat.drop_duplicates("event_id", inplace=True, ignore_index=True)
+        #event_cat.reindex(columns="event_id", inplace=True, 
+        #event_cat.reset_index(inplace=True)
+        event_cat.set_index("event_id", inplace=True)
+        #del event_cat["index"]
+        return event_cat
 
     def get_distance_matrix(self, grid: Grid3D, fname: Optional[str] = None):
         """

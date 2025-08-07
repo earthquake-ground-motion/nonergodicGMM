@@ -57,15 +57,23 @@ FDSN_SPECS = {
 
 }
 
+
+# BASE URLS
 # Base URL for the Event Query
-EVENT_QUERY_BASE_URL = "https://esm-db.eu/fdsnws/event/1/query?"
+ESM_EVENT_QUERY_BASE_URL = "https://esm-db.eu/fdsnws/event/1/query?"
 # Base URL for the station query
-STATION_QUERY_BASE_URL = "https://esm-db.eu/fdsnws/station/1/query?"
+ESM_STATION_QUERY_BASE_URL = "https://esm-db.eu/fdsnws/station/1/query?"
 # Base URL for waveform data query
-DATA_QUERY_BASE_URL = "https://esm-db.eu/esmws/eventdata/1/query?"
+ESM_DATA_QUERY_BASE_URL = "https://esm-db.eu/esmws/eventdata/1/query?"
+
+# Base URL for Seismic Portal Query
+SEISMIC_PORTAL_QUERY_BASE_URL = "https://www.seismicportal.eu/fdsnws/event/1/query?"
+
+# Base URL for ISC Bulletin Query
+ISC_BULLETIN_QUERY_BASE_URL = "https://www.isc.ac.uk/fdsnws/event/1/query?"
 
 
-def construct_query_url(query_type: str, config: Dict) -> str:
+def construct_query_url(query_type: str, config: Dict, base_url: str) -> str:
     """Constructs the url for any ESM FDSN query
 
     Args:
@@ -75,15 +83,15 @@ def construct_query_url(query_type: str, config: Dict) -> str:
     Returns:
         FDSN query URL
     """
-    if query_type == "event":
-        base_url = EVENT_QUERY_BASE_URL
-    elif query_type == "station":
-        base_url = STATION_QUERY_BASE_URL
-    elif query_type == "waveform":
-        base_url = DATA_QUERY_BASE_URL
-    else:
-        raise ValueError(f"Query type {query_type} not recognised -"
-                         " must be one of 'event', 'station' or 'waveform'")
+#    if query_type == "event":
+#        base_url = EVENT_QUERY_BASE_URL
+#    elif query_type == "station":
+#        base_url = STATION_QUERY_BASE_URL
+#    elif query_type == "waveform":
+#        base_url = DATA_QUERY_BASE_URL
+#    else:
+#        raise ValueError(f"Query type {query_type} not recognised -"
+#                         " must be one of 'event', 'station' or 'waveform'")
     query = []
     for fdsnkey, arg in config.items():
         if fdsnkey not in FDSN_SPECS:
@@ -111,13 +119,17 @@ def construct_query_url(query_type: str, config: Dict) -> str:
 class ESMEventWebService():
     """
     """
+    BASE_URL = ESM_EVENT_QUERY_BASE_URL
+    SERVICE = "ESM Webservice Event Catalogue"
+    ID_SPLITTER = "event_id="
+
     def __init__(self, config):
         """
         """
 
         self.config = deepcopy(config)
         self.config["format"] = "xml"
-        self.url = construct_query_url("event", config)
+        self.url = construct_query_url("event", config, self.BASE_URL)
         self.catalogue = []
         self.event_ids = []
 
@@ -138,7 +150,7 @@ class ESMEventWebService():
         return
 
     def __repr__(self):
-        return "ESM Webservice Event Catalogue (%g Events)" % len(self)
+        return "%s (%g Events)" % (self.SERVICE, len(self))
 
     def get_events(self):
         """
@@ -172,19 +184,22 @@ class ESMEventWebService():
             )
         logging.info("Retreived catalogue contains {:g} events".format(len(self.catalogue)))
         for ev in self.catalogue:
-            self.event_ids.append(ev.resource_id.id.split("event_id=")[1])
+            self.event_ids.append(ev.resource_id.id.split(self.ID_SPLITTER)[1])
         return
 
 
 class ESMStationWebservice():
     """
     """
+    BASE_URL = ESM_STATION_QUERY_BASE_URL
+    SERVICE = "ESM Webservice Station Inventory"
+
     def __init__(self, config):
         """
         """
         self.config = deepcopy(config)
         self.config["format"] = "xml"
-        self.url = construct_query_url("station", config)
+        self.url = construct_query_url("station", config, self.BASE_URL)
         self.stations = {}
         self.station_ids = []
         logging.info("Query URL: %s" % self.url)
@@ -213,8 +228,8 @@ class ESMStationWebservice():
         return
 
     def __repr__(self):
-        return "ESM Webservice Station Inventory (%g stations from %g networks)" %\
-            (len(self.station_ids), len(self.stations))
+        return "%s (%g stations from %g networks)" %\
+            (self.SERVICE, len(self.station_ids), len(self.stations))
 
     def __len__(self):
         return len(self.station_ids)
@@ -228,13 +243,16 @@ class ESMStationWebservice():
 class ESMWaveformWebService():
     """
     """
+    BASE_URL = ESM_DATA_QUERY_BASE_URL
+    SERVICE = "ESM Webservice Waveforms"
+
     def __init__(self, config, filename):
         """
         """
         self.config = deepcopy(config)
         self.config["format"] = "hdf5"
         self.filename = filename if filename.endswith(".hdf5") else (filename + ".hdf5")
-        self.url = construct_query_url("waveform", config)
+        self.url = construct_query_url("waveform", config, self.BASE_URL)
 
     def download_waveforms(self):
         """
@@ -250,6 +268,21 @@ class ESMWaveformWebService():
             logging.info("---- Failed download")
             logging.info("---- %s" % response.reason)
         return
+
+
+class SeismicPortalWebService(ESMEventWebService):
+    """
+    """
+    BASE_URL = SEISMIC_PORTAL_QUERY_BASE_URL
+    SERVICE = "Seismic Portal Event Catalogue Webservice"
+    ID_SPLITTER = "/event/"
+
+
+class ISCBulletinWebService(ESMEventWebService):
+    """
+    """
+    BASE_URL = ISC_BULLETIN_QUERY_BASE_URL
+    SERVICE = "ISC Bulletin Webservice"
 
 
 #    def download_waveforms(self):
