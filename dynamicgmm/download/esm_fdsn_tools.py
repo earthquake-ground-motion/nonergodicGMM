@@ -43,6 +43,8 @@ FDSN_SPECS = {
     "magnitudetype": (str, VALID_MAGTYPE),
     "includeallmagnitudes": (bool, ),
     "includeallorigins": (bool, ),
+    "includeallfocalmechanisms": (bool, ),  # GEOFON only
+    "includefocalmechanism": (bool, ),  # GEOFON only
     "limit": (int, 0, np.inf),
     "eventid": (str, ),
     "catalog": (str, VALID_CATALOG),
@@ -58,11 +60,14 @@ FDSN_SPECS = {
 }
 
 
-# BASE URLS
+# BASE URLS FOR CATALOGUE SERVICES
+
 # Base URL for the Event Query
 ESM_EVENT_QUERY_BASE_URL = "https://esm-db.eu/fdsnws/event/1/query?"
+
 # Base URL for the station query
 ESM_STATION_QUERY_BASE_URL = "https://esm-db.eu/fdsnws/station/1/query?"
+
 # Base URL for waveform data query
 ESM_DATA_QUERY_BASE_URL = "https://esm-db.eu/esmws/eventdata/1/query?"
 
@@ -71,6 +76,9 @@ SEISMIC_PORTAL_QUERY_BASE_URL = "https://www.seismicportal.eu/fdsnws/event/1/que
 
 # Base URL for ISC Bulletin Query
 ISC_BULLETIN_QUERY_BASE_URL = "https://www.isc.ac.uk/fdsnws/event/1/query?"
+
+# Base URL for GEOFON event query
+GEOFON_EVENT_QUERY_BASE_URL = "https://geofon.gfz.de/fdsnws/event/1/query?"
 
 
 def construct_query_url(query_type: str, config: Dict, base_url: str) -> str:
@@ -121,7 +129,7 @@ class ESMEventWebService():
     """
     BASE_URL = ESM_EVENT_QUERY_BASE_URL
     SERVICE = "ESM Webservice Event Catalogue"
-    ID_SPLITTER = "event_id="
+    EVENT_ID_STRIP = "smi:esm-db.eu/fdsnws/event/1/query?event_id="
 
     def __init__(self, config):
         """
@@ -184,7 +192,7 @@ class ESMEventWebService():
             )
         logging.info("Retreived catalogue contains {:g} events".format(len(self.catalogue)))
         for ev in self.catalogue:
-            self.event_ids.append(ev.resource_id.id.split(self.ID_SPLITTER)[1])
+            self.event_ids.append(ev.resource_id.id.replace(self.EVENT_ID_STRIP, ""))
         return
 
 
@@ -275,7 +283,7 @@ class SeismicPortalWebService(ESMEventWebService):
     """
     BASE_URL = SEISMIC_PORTAL_QUERY_BASE_URL
     SERVICE = "Seismic Portal Event Catalogue Webservice"
-    ID_SPLITTER = "/event/"
+    EVENT_ID_STRIP = "quakeml:eu.emsc/event/"
 
 
 class ISCBulletinWebService(ESMEventWebService):
@@ -283,7 +291,15 @@ class ISCBulletinWebService(ESMEventWebService):
     """
     BASE_URL = ISC_BULLETIN_QUERY_BASE_URL
     SERVICE = "ISC Bulletin Webservice"
+    EVENT_ID_STRIP = "smi:ISC/evid="
 
+
+class GEOFONEventWebService(ESMEventWebService):
+    """
+    """
+    BASE_URL = GEOFON_EVENT_QUERY_BASE_URL
+    SERVICE = "GEOFON Event Webservice"
+    EVENT_ID_STRIP = "smi:org.gfz-potsdam.de/geofon/"
 
 #    def download_waveforms(self):
 #        """

@@ -2,6 +2,7 @@
 Ground Motion Model structure for ergodic GMMs that require calculation
 of the total residuals with parts of the GMMs themselves exctracred
 """
+import logging
 from copy import deepcopy
 from typing import List, Optional
 import numpy as np
@@ -19,16 +20,15 @@ import openquake.hazardlib.gsim.kotha_2020 as ko20
 import openquake.hazardlib.gsim.cauzzi_2014 as ca15
 
 # Import the Flatfile
-from grid_tools import Flatfile
+from dynamicgmm.nonergodic.grid_tools import Flatfile
 
 # For building the contexts specific attributes require non-float datatypes
-INTEGER_DTYPES = {"region",}
-BOOLEAN_DTYPES = {"vs30measured", "backarc",}
+INTEGER_DTYPES = {"region", }
+BOOLEAN_DTYPES = {"vs30measured", "backarc", }
 BYTE_DTYPES = {"siteclass": (np.bytes_, 1),
                "ec8": (np.bytes_, 1),
                "ec8_p18": (np.bytes_, 2),
                "geology": (np.bytes_, 20)}
-               
 
 
 class ErgodicGMM():
@@ -55,7 +55,6 @@ class ErgodicGMM():
             else:
                 self.dtypes.append((scenario_property, np.float64))
         self.dtypes = np.dtype(self.dtypes)
-        
 
     def get_anelastic_attenuation_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
         raise NotImplementedError
@@ -68,7 +67,7 @@ class ErgodicGMM():
 
 #    def get_x_2(self, imts: List, ctx: np.recarray) -> np.ndarray:
 #        raise NotImplementedError
-#    
+#
 #    def get_x_3(self, imts: List, ctx: np.recarray) -> np.ndarray:
 #        raise NotImplementedError
 
@@ -76,10 +75,8 @@ class ErgodicGMM():
         """
         """
         # Build the metadata context
-     
         n = input_flatfile.shape[0]
         ctx = np.recarray(n, dtype=self.dtypes)
-        #ctx["mag"] = flatfile["magnitude"].to_numpy()
 
         scenario_mapping = {"magnitude": "mag",
                             "rupture_width": "width",
@@ -89,6 +86,7 @@ class ErgodicGMM():
                             }
         flatfile = input_flatfile.rename(columns=scenario_mapping,
                                          inplace=False)
+        flatfile["region"] = np.zeros(flatfile.shape[0], dtype=int)
 
         for scenario_property in self.REQUIRES:
             if scenario_property in INTEGER_DTYPES:
@@ -114,7 +112,7 @@ class ErgodicGMM():
             if hdr.startswith("SA("):
                 flatfile_periods.append(float(hdr.replace("SA(", "").replace(")", "")))
                 sa_columns.append(hdr)
-
+        n = flatfile.shape[0]
         flatfile_periods = np.array(flatfile_periods)
         ascend = np.argsort(flatfile_periods)
         flatfile_periods = flatfile_periods[ascend]
@@ -131,8 +129,8 @@ class ErgodicGMM():
             elif str(imt).startswith("SA("):
                 period = float(str(imt).replace("SA(", "").replace(")", ""))
                 if (period < min_t) or (period > max_t):
-                    logging.info("Required IMT %s outside period range in flatfile (%f - %f)" &\
-                        (str(imt), min_t, max_t))
+                    logging.info("Required IMT %s outside period range in flatfile (%f - %f)" &
+                                 (str(imt), min_t, max_t))
                     observations[str(imt)] = np.nan * np.ones(n)
                 else:
                     iloc = np.searchsorted(flatfile_periods, period)
@@ -220,7 +218,7 @@ class ####1234Ergodic(ErgodicGMM):
             ????
         return geometric_spreading
 
-   
+
     def get_linear_site_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
         "
         "
@@ -260,7 +258,7 @@ class ASK2014Ergodic(ErgodicGMM):
             geometric_spreading[i, :] = (C["a2"] + C["a3"] * (ctx.mag - C["m1"])) *\
                 np.log(rval)
         return geometric_spreading
- 
+
     def get_linear_site_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
         """
         """
@@ -300,7 +298,6 @@ class BSSA2014Ergodic(ErgodicGMM):
                 np.log(rval / bssa14.CONSTS["Rref"])
         return geometric_spreading
 
-   
     def get_linear_site_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
         """
         """
@@ -334,7 +331,7 @@ class CB2014Ergodic(ErgodicGMM):
             geometric_spreading[i, :] = cb14._get_geometric_attenuation_term(C, ctx.mag,
                                                                              ctx.rrup)
         return geometric_spreading
-   
+
     def get_linear_site_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
         """
         """
@@ -360,7 +357,7 @@ class CY2014Ergodic(ErgodicGMM):
             attenuation[i, :] = cy14.get_far_field_distance_scaling("CAL", C,
                                                                     ctx.mag, ctx.rrup)
         return attenuation
-                
+
     def get_geometric_spreading_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
         """
         """
@@ -398,5 +395,82 @@ class CY2014Ergodic(ErgodicGMM):
 #            x_3[i, :] = np.log(ctx.vs30 / 1130).clip(-np.inf, 0.0)
 #        return x_3
 
+class KothaEtAl2020ESHM20Ergodic(ErgodicGMM):
+    """Kotha et al. (2020) model adapted for ESHM20. Note that here the regional
+    adjustments are all turned off and we are interested only in the base model
+    """
+    GMM = valid.gsim("KothaEtAl2020ESHM20")
+
+    def get_anelastic_attenuation_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
+        """
+        """
+        attenuation = np.zeros([len(imts), len(ctx)])
+        for i, imt in enumerate(imts):
+            C = self.GMM.COEFFS[imt]
+            h = ko20._get_h(C, ctx.hypo_depth)
+            rval = np.sqrt(ctx.rjb ** 2. + h ** 2.)
+            rref_val = np.sqrt(ko020.CONSTANTS["Rref"] ** 2. + h ** 2.)
+            c3 =  ko20.get_distance_coefficients_2("ESHM20", None, 0.0, C, imt, ctx) / 100.0
+            attenuation[i, :] = c3 * (rval - rref_val)
+        return attenuation
+
+    def get_geometric_spreading_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
+        """
+        """
+        geometric_spreading = np.zeros([len(imts), len(ctx)])
+        for i, imt in enumerate(imts):
+            C = self.GMM.COEFFS[imt]
+            h = ko20._get_h(C, ctx.hypo_depth)
+            rval = np.sqrt(ctx.rjb ** 2. + h ** 2.)
+            rref_val = np.sqrt(ko020.CONSTANTS["Rref"] ** 2. + h ** 2.)
+            geometric_spreading[i, :] = \
+                (C["c1"] + C["c2"] * (ctx.mag - ko20.CONSTANTS["Mref"])) *\
+                np.log(rval / rref_val) 
+            #geometric_spreading[i, :] = cy14.get_geometric_spreading(C, ctx.mag, ctx.rrup)
+        return geometric_spreading
+
+    def get_linear_site_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
+        """
+        """
+        linear_site = np.zeros([len(imts), len(ctx)])
+        for i, imt in enumerate(imts):
+            C = self.GMM.COEFFS[imt]
+            linear_site[i, :] = ko20.get_site_amplification("ESHM20", None, C, ctx, imt)
+        return linear_site
 
 
+class BindiEtAl2014Ergodic(ErgodicGMM):
+    """
+    """
+    GMM = valid.gsim("BindiEtAl2014Rjb")
+
+    def get_anelastic_attenuation_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
+        """
+        """
+        attenuation = np.zeros([len(imts), len(ctx)])
+        for i, imt in enumerate(imts):
+            C = self.GMM.COEFFS[imt]
+            r_adj = np.sqrt(ctx.rjb ** 2.0 + C["h"] ** 2.0)
+            attenuation[i, :] = C["c3"] * (r_adj - bi14.CONSTS["Rref"])
+        return attenuation
+
+    def get_geometric_spreading_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
+        """
+        """
+        geometric_spreading = np.zeros([len(imts), len(ctx)])
+        for i, imt in enumerate(imts):
+            C = self.GMM.COEFFS[imt]
+            r_adj = np.sqrt(ctx.rjb ** 2.0 + C["h"] ** 2.0)
+            geometric_spreading[i, :] = (
+                C["c1"] + C["c2"] * (ctx.magmag - bi14.CONSTS["Mref"])
+            ) * np.log10(r_adj / bi14.CONSTS["Rref"])
+        return geometric_spreading
+    
+    def get_linear_site_term(self, imts: List, ctx: np.recarray) -> np.ndarray:
+        """
+        """
+        linear_site = np.zeros([len(imts), len(ctx)])
+        for i, imt in enumerate(imts):
+            C = self.GMM.COEFFS[imt]
+            linear_site[i, :] = C["gamma"] * np.log10(ctx.vs30 / bi14.CONSTS["Vref"])
+        return linear_site

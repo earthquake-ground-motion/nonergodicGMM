@@ -13,6 +13,25 @@ import obspy
 logging.basicConfig(level=logging.INFO)
 
 
+def _author_from_creation_info(
+    creation_info: obspy.core.event.base.CreationInfo
+) -> Union[str, None]:
+    """
+    """
+    if not creation_info:
+        return None
+    if creation_info["author"]:
+        return creation_info["author"]
+    elif creation_info["author_uri"]:
+        return creation_info["author_uri"].id.split("/")[-1]
+    elif creation_info["agency_id"]:
+        return creation_info["agency_id"]
+    elif creation_info["agency_uri"]:
+        return creation_info["agency_uri"].id.split("/")[-1]
+    else:
+        return None
+
+
 """
 Elemental earthquake catalogue objects
 """
@@ -31,14 +50,17 @@ class Magnitude():
     def __init__(
         self,
         id: str,
+        event_id: str,
         value: float,
         mag_type: str,
         author: str,
         uncertainty: Optional[obspy.core.event.QuantityError] = None,
-        origin_id: Optional[str] = "", 
+        origin_id: Optional[str] = "",
         metadata: Optional[Dict] = None
     ):
         self.id = id
+        self.event_id = event_id
+        self.origin_id = origin_id
         self.value = value
         self.mag_type = mag_type
         self.author = author
@@ -58,26 +80,36 @@ class Magnitude():
         )
 
     @classmethod
-    def from_quakeml(cls, magnitude: obspy.core.event.Magnitude):
+    def from_quakeml(
+        cls,
+        magnitude: obspy.core.event.Magnitude,
+        event_id: str,            
+        id_splitter: Dict
+    ):
         """Instantiate the object from an obspy.core.event.Magnitude object
         """
-        i_d = magnitude.resource_id.id.split("magnitude_id=")[-1]
+        mag_splitter = id_splitter["magnitude"]
+        i_d = magnitude.resource_id.id.split(mag_splitter)[-1]
         mag = magnitude.mag
-        author = magnitude.creation_info["author"]
+        author = _author_from_creation_info(magnitude.creation_info)
         mag_type = magnitude.magnitude_type
         if magnitude.origin_id:
-            origin_id = magnitude.origin_id.id.split("origin_id=")[-1]
+            origin_splitter = id_splitter["origin"]
+            origin_id = magnitude.origin_id.id.split(origin_splitter)[-1]
         else:
             origin_id = ""
         metadata = {
-            "creation_time": str(magnitude.creation_info["creation_time"])
+            "creation_time": str(magnitude.creation_info["creation_time"]) \
+                if magnitude.creation_info else None
         }
         if magnitude.method_id:
-            metadata["method_id"] = magnitude.method_id.id.split("method_id=")[-1]
+            method_splitter = id_splitter.get("method", "method_id=")
+            metadata["method_id"] = magnitude.method_id.id.split(method_splitter)[-1]
         if len(magnitude.comments):
             metadata["comments"] = "|".join(magnitude.comments)
 
-        return cls(i_d, mag, mag_type, author, magnitude.mag_errors, origin_id, metadata)
+        return cls(i_d, event_id, mag, mag_type, author,
+                   magnitude.mag_errors, origin_id, metadata)
 
     def to_dict(self) -> Dict:
         """Parse to a dictionary (json compatible). In this case the private
@@ -93,6 +125,7 @@ class Origin():
     def __init__(
         self,
         id: str,
+        event_id: str,
         time: str,
         longitude: float,
         latitude: float,
@@ -105,7 +138,8 @@ class Origin():
     ):
         """
         """
-        self.id =id
+        self.id = id
+        self.event_id = event_id
         self.time = time
         self.longitude = longitude
         self.latitude = latitude
@@ -127,22 +161,32 @@ class Origin():
         )
 
     @classmethod
-    def from_quakeml(cls, origin):
+    def from_quakeml(
+        cls,
+        origin: obspy.core.event.Origin,
+        event_id: str, 
+        id_splitter: Dict,
+        depth_scaling_factor: float = 1.0,
+        ):
         """Parse the origin information from an obspy.core.event.Origin object
         """
-        i_d = origin.resource_id.id.split("origin_id=")[-1]
+        i_d = origin.resource_id.id.split(id_splitter["origin"])[-1]
         time = str(origin.time)
-        author = origin.creation_info["author"]
+        author = _author_from_creation_info(origin.creation_info)
         return cls(
             i_d,
+            event_id, 
             time,
             origin.longitude,
             origin.latitude,
-            origin.depth,
+            (origin.depth * depth_scaling_factor) if origin.depth else None,
             author,
-            origin.longitude_errors["uncertainty"] if origin.longitude_errors else None,
-            origin.latitude_errors["uncertainty"] if origin.latitude_errors else None,
-            origin.depth_errors["uncertainty"] if origin.depth_errors else None,
+            origin.longitude_errors["uncertainty"] \
+                if origin.longitude_errors["uncertainty"] else None,
+            origin.latitude_errors["uncertainty"] \
+                if origin.latitude_errors["uncertainty"] else None,
+            (origin.depth_errors["uncertainty"] * depth_scaling_factor) \
+                if origin.depth_errors["uncertainty"] else None,
             origin.depth_type
         )
 
@@ -214,16 +258,27 @@ def _parse_moment_tensor(moment_tensor: obspy.core.event.source.MomentTensor) ->
 
 
 class FocalMechanism():
-    def __init__(self, id, scalar_moment, author, nodal_planes: Optional[Dict] = None,
-                 principal_axes: Optional[Dict] = None, tensor: Optional[Dict] = None, 
-                 tensor_error: Optional[Dict] = None, ):
-        self.id = id
+    def __init__(
+        self,
+        i_d: str,
+        event_id: str,
+        scalar_moment: float,
+        author: str,
+        nodal_planes: Optional[Dict] = None,
+        principal_axes: Optional[Dict] = None,
+        tensor: Optional[Dict] = None, 
+        tensor_error: Optional[Dict] = None,
+        tensor_id: Optional[str] = None
+    ):
+        self.id = i_d
+        self.event_id = event_id
         self.moment = scalar_moment
         self.author = author
         self.nodal_planes = nodal_planes
         self.principal_axes = principal_axes
         self.tensor = tensor
         self.tensor_error = tensor_error
+        self.tensor_id = tensor_id
 
     def __repr__(self):
         has_nodal_planes = "Y" if self.nodal_planes else "N"
@@ -239,11 +294,11 @@ class FocalMechanism():
         )
 
     @classmethod
-    def from_quakeml(cls, focal_mechanism):
+    def from_quakeml(cls, focal_mechanism, event_id: str, id_splitter: Dict):
         """
         """
-        i_d = focal_mechanism.resource_id.id.split("focal_mechanism_id=")[-1]
-        author = focal_mechanism.creation_info["author"]
+        i_d = focal_mechanism.resource_id.id.split(id_splitter["focal_mechanism"])[-1]
+        author = _author_from_creation_info(focal_mechanism.creation_info)
         nodal_planes = None
         if focal_mechanism.nodal_planes:
             nodal_planes = _parse_nodal_planes(focal_mechanism.nodal_planes)
@@ -252,13 +307,18 @@ class FocalMechanism():
             principal_axes = _parse_principal_axes(focal_mechanism.principal_axes)
         tensor = None
         tensor_error = None
+        tensor_id = None
         if focal_mechanism.moment_tensor:
             moment = focal_mechanism.moment_tensor["scalar_moment"]
             if focal_mechanism.moment_tensor.tensor:
+                tensor_id = focal_mechanism.moment_tensor.resource_id.id.split(
+                    id_splitter["moment_tensor"]
+                )[-1]
                 tensor, tensor_error = _parse_moment_tensor(focal_mechanism.moment_tensor)
         else:
             moment = None
-        return cls(i_d, moment, author, nodal_planes, principal_axes, tensor, tensor_error)
+        return cls(i_d, event_id, moment, author, nodal_planes, principal_axes,
+                   tensor, tensor_error, tensor_id)
 
     def to_dict(self) -> Dict:
         """Exports the information to a json-compatible dictionary. In this case the
@@ -340,20 +400,24 @@ class Event():
         return self.preferred_origin, self.preferred_magnitude, pref_foc_mech
 
     @classmethod
-    def from_quakeml(cls, event):
+    def from_quakeml(cls, event, id_splitter: Dict, depth_scaling_factor: float = 1.0):
         """
         """
-        i_d = event.resource_id.id.split("event_id=")[-1]
-        author = event.creation_info["author"]
-        origins = [Origin.from_quakeml(orig) for orig in event.origins]
-        preferred_origin_id = event.preferred_origin_id.id.split("origin_id=")[-1]
-        magnitudes = [Magnitude.from_quakeml(mag) for mag in event.magnitudes]
-        preferred_magnitude_id = event.preferred_magnitude_id.id.split("magnitude_id=")[-1]
+        i_d = event.resource_id.id.split(id_splitter["event"])[-1]
+        author = _author_from_creation_info(event.creation_info)
+        origins = [Origin.from_quakeml(orig, i_d, id_splitter, depth_scaling_factor)
+                   for orig in event.origins]
+        preferred_origin_id = event.preferred_origin_id.id.split(id_splitter["origin"])[-1]
+        magnitudes = [Magnitude.from_quakeml(mag, i_d, id_splitter)
+                      for mag in event.magnitudes]
+        preferred_magnitude_id = event.preferred_magnitude_id.id.split(
+            id_splitter["magnitude"]
+        )[-1]
         if len(event.focal_mechanisms):
-            focal_mechanisms = [FocalMechanism.from_quakeml(foc_mech)
+            focal_mechanisms = [FocalMechanism.from_quakeml(foc_mech, i_d, id_splitter)
                                 for foc_mech in event.focal_mechanisms]
             preferred_focal_mechanism_id = \
-                event.preferred_focal_mechanism_id.id.split("focal_mechanism_id=")[-1]
+                event.preferred_focal_mechanism_id.id.split(id_splitter["focal_mechanism"])[-1]
         else:
             focal_mechanisms = None
             preferred_focal_mechanism_id = None
@@ -397,6 +461,7 @@ class Event():
             output["focal_mechanisms"].append(foc_mech_dict)
         return output
 
+
 class Catalogue():
     """
     """
@@ -436,13 +501,15 @@ class Catalogue():
         cls, 
         catalogue: obspy.core.event.catalog.Catalog,
         name: str,
-        data_source: Optional[str] = None
+        id_splitter: Dict,
+        data_source: Optional[str] = None,
+        depth_scaling_factor: float = 1.0
     ):
         """
         """
         events = []
         for event in catalogue:
-            events.append(Event.from_quakeml(event))
+            events.append(Event.from_quakeml(event, id_splitter, depth_scaling_factor))
         return cls(name, events, data_source)
 
     @classmethod
@@ -450,18 +517,26 @@ class Catalogue():
         cls,
         catalogues: List,
         name: str,
-        data_source: Optional[str] = None
+        id_splitter: Dict,
+        data_source: Optional[str] = None,
+        depth_scaling_factor: float = 1.0
     ):
         """
         """
         all_events = []
         for catalogue in catalogues:
             try:
-                sub_catalogue = Catalogue.from_quakeml(catalogue, "")
+                sub_catalogue = Catalogue.from_quakeml(
+                    catalogue,
+                    "",
+                    id_splitter,
+                    data_source,
+                    depth_scaling_factor
+                )
             except:
                 for i, event in enumerate(catalogue):
                     print(event.resource_id, event.preferred_origin().time)
-                    _ = Event.from_quakeml(event)
+                    _ = Event.from_quakeml(event, id_splitter, depth_scaling_factor)
             all_events.extend(sub_catalogue.events)
         return cls(name, all_events, data_source)
 

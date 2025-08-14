@@ -430,10 +430,7 @@ class Flatfile():
         """
         event_cat = self.data[self.SOURCE_HEADERS].copy()
         event_cat.drop_duplicates("event_id", inplace=True, ignore_index=True)
-        #event_cat.reindex(columns="event_id", inplace=True, 
-        #event_cat.reset_index(inplace=True)
         event_cat.set_index("event_id", inplace=True)
-        #del event_cat["index"]
         return event_cat
 
     def get_distance_matrix(self, grid: Grid3D, fname: Optional[str] = None):
@@ -469,6 +466,21 @@ class Flatfile():
         return distance_matrix
 
     @staticmethod
+    def export_distance_matrix_hdf5(distance_matrix: pd.DataFrame, filename: str):
+        """Exports the distance matrix to an hdf5
+        """
+        nrow, ncol = distance_matrix.shape
+        fle = h5py.File(filename, "a")
+        for key in ["rsn", "eqid", "ssn"]:
+            dset = fle.create_dataset(key, (nrow,), dtype="i")
+            dset[:] = distance_matrix[key].to_numpy()
+        dist_dset = fle.create_dataset("distance", (nrow, ncol - 3), dtype="f")
+        dist_dset[:] = distance_matrix[:, 3:].to_numpy()
+        fle.close()
+        logging.info("Distance Matrix exported to %s" % filename)
+        return
+
+    @staticmethod
     def _get_path_distances_through_cells(path, grid, eqz, pos):
         """
         """
@@ -477,7 +489,7 @@ class Flatfile():
         for loc in grid.grid_tree.intersection(path.bounds):
             # Get the path inside each specific polygon (if it intersects) 
             path_in_cell = grid.polygons[loc].intersection(path)
-            if path_in_cell:
+            if path_in_cell and isinstance(path_in_cell, geometry.LineString):
                 locs.append(loc)
                 paths_in_cell.append(path_in_cell)
         distances = np.zeros([grid.nx * grid.ny, grid.nz])
@@ -520,8 +532,12 @@ class Flatfile():
             # Total length of the vector in the column (in km)
             total_length = np.sqrt(surface_length ** 2. + dz ** 2.)
             # Get 3D vector from EQ point to intersection points
-            p0 = np.array([path_in_cell.xy[0][0], path_in_cell.xy[1][0]]) - eqxyz[:2]
-            p1 = np.array([path_in_cell.xy[0][1], path_in_cell.xy[1][1]]) - eqxyz[:2]
+            try:
+               p0 = np.array([path_in_cell.xy[0][0], path_in_cell.xy[1][0]]) - eqxyz[:2]
+               p1 = np.array([path_in_cell.xy[0][1], path_in_cell.xy[1][1]]) - eqxyz[:2]
+            except IndexError:
+               print(path_in_cell, eqxyz, sitexyz, surface_length, total_length)
+               raise
             # Get depths of the intersection points
             z0 = (eqxyz[2] - ((p0 / vector_3d[:2])[0] * eqxyz[2]))
             z1 = (eqxyz[2] - ((p1 / vector_3d[:2])[0] * eqxyz[2]))

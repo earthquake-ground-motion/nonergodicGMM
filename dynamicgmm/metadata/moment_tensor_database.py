@@ -9,10 +9,20 @@ import numpy as np
 import pandas as pd
 import obspy
 from obspy.core.event import (
-    Event, Origin, Magnitude, ResourceIdentifier, CreationInfo,
+    Catalog, Event, Origin, Magnitude, ResourceIdentifier, CreationInfo,
     NodalPlane, NodalPlanes, FocalMechanism, MomentTensor, Tensor, PrincipalAxes, Axis
 )
 from openquake.hazardlib.geo import geodetic
+
+
+logging.basicConfig(level=logging.INFO)
+
+
+M0_TO_MW = lambda m0: (2.0 / 3.0) * (np.log10(m0) - 9.05)
+MW_TO_M0 = lambda mw: 10.0 ** ((1.5 * mw) + 9.05)
+
+
+ISC_WEBSERVICES_BASE_URL = "http://www.isc.ac.uk/fdsnws/event/1/query?"
 
 
 def build_emsc_mtwebservice_url(config: Dict) -> str:
@@ -43,7 +53,7 @@ def get_emsc_moment_tensors_by_year(start_year: int, end_year: int, config: Dict
         year_config["starttime"] = "{:g}-01-01T00:00:000".format(year)
         year_config["endtime"] = "{:g}-01-01T00:00:00".format(year + 1)
         query_url = build_emsc_mtwebservice_url(year_config)
-        print(query_url)
+        logging.info(query_url)
         if config["format"] == "quakeml":
             catalogues[year] = obspy.read_events(query_url, format="quakeml")
         elif config["format"] == "json":
@@ -52,7 +62,7 @@ def get_emsc_moment_tensors_by_year(start_year: int, end_year: int, config: Dict
             catalogues[year] = json.load(raw_data)
         else:
             raise ValueError("File format %s not supported" % config["format"])
-        print("Found %g events" % len(catalogues[year]))
+        logging.info("Found %g events" % len(catalogues[year]))
     return catalogues
 
 
@@ -68,7 +78,7 @@ class MomentTensorDatabase():
         self.events = events if events is not None else []
         self.data_source = data_source
         self.comments = comments
-        self.event_ids = [event.resource_id for event in self.events]
+        self.event_ids = [event.resource_id.id for event in self.events]
         self._dataframe = None
 
     def __repr__(self):
@@ -171,8 +181,8 @@ class MomentTensorDatabase():
                         for mt_key in ["m_rr", "m_tt", "m_pp", "m_rt", "m_rp", "m_tp"]:
                             self._dataframe[mt_key].append(np.nan)
                     break
-        self._dataframe = pd.DataFrame(self._dataframe)
-        self._dataframe["evt_time"] = pd.to_datetime(self._dataframe["evt_time"], utc=True)
+        #self._dataframe = pd.DataFrame(self._dataframe)
+        #self._dataframe["evt_time"] = pd.to_datetime(self._dataframe["evt_time"], utc=True)
         return self._dataframe
 
     @classmethod
@@ -198,6 +208,74 @@ class MomentTensorDatabase():
 
         return cls(identifier=identifier, events=events, data_source=data_source,
                    comments=comments)
+
+    @classmethod
+    def from_isc_fmquakeml(cls, identifier: str, path_or_url: str,
+                           data_source: Optional[str] = None, comments: Optional[str] = None,
+                           force=False):
+        """Builds a moment tensor database form ISC's FMQuakeML format. Effectively this is
+        the same as the QuakeML format but in the ISC Moment Tensor database the magnitudes
+        are missing, so this assigns the corresponding moment magnitude from the scalar
+        moment information
+        """
+        mt_catalogue = cls.from_quakeml(identifier, path_or_url, data_source, comments)
+        for event in mt_catalogue:
+            event.magnitudes = []
+            for f_m in event.focal_mechanisms:
+                if not f_m.moment_tensor:
+                    # Wont be able to get an Mw value for this tensor
+                    continue
+                f_m_id = f_m.resource_id.id
+                f_m_author = f_m.creation_info.get("author", "ISC")
+                mag_id = f_m_id.replace("smi:ISC/fault_planes;fmid=", "/magid=") +\
+                    f"_Mw_{f_m_author}"
+                mag_id = ResourceIdentifier(mag_id, prefix="smi:ISC")
+                m_w = Magnitude(
+                    resource_id=mag_id,
+                    mag=M0_TO_MW(f_m.moment_tensor.scalar_moment),
+                    magnitude_type="Mw",
+                    origin_id=f_m.moment_tensor.derived_origin_id,
+                    creation_info=f_m.creation_info,
+                )
+                if event.preferred_focal_mechanism_id.id and \
+                        (mag_id.id == event.preferred_focal_mechanism_id.id):
+                    event.preferred_magnitude_id = mag_id
+                event.magnitudes.append(m_w)
+            if force and not len(event.magnitudes):
+                cls.query_isc_bulletin_for_single_event(event)
+        return mt_catalogue
+
+    @staticmethod
+    def query_isc_bulletin_for_single_event(event):
+        """
+        """
+        logging.info("Downloading magnitude and origin information for Event: %s"
+                     % event.resource_id.id)
+        # Get all the magnitudes for this event
+        evid = event.resource_id.id.split("evid=")[-1]
+        event_url = ISC_WEBSERVICES_BASE_URL + "&".join([
+            f"eventid={evid}",
+            "includeallmagnitudes=true",
+            "includeallorigins=true",
+            "format=xml"])
+        logging.info("URL: %s" % event_url)
+        isc_event = []
+        try:
+            isc_event = obspy.read_events(event_url, format="QuakeML")
+        except:
+            pass
+        if len(isc_event):
+            for f_m in event.focal_mechanisms:
+                for mag in isc_event[0].magnitudes:
+                    if (f_m.creation_info["author"] == mag.creation_info["author"]) and \
+                            (mag.magnitude_type.upper() == "MW"):
+                        event.magnitudes.append(mag)
+                        break
+        else:
+            logging.info("Query failed")
+        if not len(event.magnitudes):
+            logging.info("No viable Mw values found for event %s" % evid)
+        return
 
     @classmethod
     def from_seismicportal_json(
@@ -507,66 +585,195 @@ class MomentTensorDatabase():
             events.append(event)
         return cls(identifier, events, data_source=data_source, comments=comments)
 
+    def to_quakeml(self, output_file):
+        """Exports the catalogue to QuakeML by creating an instance of an
+        obspy.core.event.Catalog class and using the xml writer
+        """
+        resource_id = ResourceIdentifier(self.id)
+        creation_info = CreationInfo(author=self.data_source) if self.data_source else None
+        description = self.comments if self.comments else None
+        catalogue = Catalog(events=self.events,
+                            resource_id=resource_id,
+                            description=description,
+                            creation_info=creation_info)
+        catalogue.write(output_file, "QUAKEML")
+        logging.info("Written to file %s" % output_file)
+        return
+
+    def get_all_agency_magnitude_pairs(self):
+        """Retrieves a dictionary containing the dataset of magnitudes associated with
+        each commonly reported agencies for each agency and magnitude pair found in the
+        database
+        """
+        agency_magnitude_pairs = {}
+        for event in self:
+            nmag = len(event.magnitudes)
+            if nmag < 2:
+                # Only one value, skip
+                continue
+            for i in range(nmag - 1):
+                mag_i = event.magnitudes[i]
+                if mag_i.magnitude_type.upper() != "MW":
+                    continue
+                val_i = mag_i.mag
+                author_i = mag_i.creation_info["author"]
+                for j in range(i + 1, nmag):
+                    mag_j = event.magnitudes[j]
+                    if mag_j.magnitude_type.upper() != "MW":
+                        continue
+                    val_j = mag_j.mag
+                    author_j = mag_j.creation_info["author"]
+                    #print(author_i, val_i, author_j, val_j)
+                    if ((author_i, author_j) in agency_magnitude_pairs):    
+                        agency_magnitude_pairs[(author_i, author_j)].append([val_i, val_j])
+                    elif (author_j, author_i) in agency_magnitude_pairs:
+                        agency_magnitude_pairs[(author_j, author_i)].append([val_i, val_j])
+                    else:
+                         agency_magnitude_pairs[(author_i, author_j)] = [[val_i, val_j]]
+        output = {}
+        for (agcy1, agcy2) in agency_magnitude_pairs:
+            if not len(agency_magnitude_pairs[(agcy1, agcy2)]):
+                continue
+            dset1 = np.array(agency_magnitude_pairs[(agcy1, agcy2)])
+            if (agcy2, agcy1) in agency_magnitude_pairs:
+                # Turn to numpy array and swap column order
+                dset2 = np.array(agency_magnitude_pairs[(agcy2, agcy1)])[:, ::-1]
+                output[(agcy1, agcy2)] = np.column_stack([dset1, dset2])
+                agency_magnitude_pairs[(agcy2, agcy1)] = []
+            else:
+                output[(agcy1, agcy2)] = dset1
+        return output
+
     def find_matching_focal_mechanisms(
             self,
-            catalogue: pd.DataFrame,
-            time_delta: float = 30.0,
-            distance_delta: float = 50.0
-            ) -> pd.DataFrame:
-        """Given an input earthquake catalogue, creates a dataframe with focal mechanism
-        information and assigns the appropriate focal mechanism parameters to those earthquakes
-        with corresponding focal mechanims in the database
-
-        Args:
-            catalogue: Target catalogue for assigning focal mechanisms
-            time_delta: Maximum time difference in seconds for matching events
-            distance_delta: Maximum separation distance (in km) for matching events
+            time_window_s: int,
+            distance_window_km: float,
+            identifiers: Union[List, np.ndarray, pd.Series],
+            times: Union[List, np.ndarray, pd.Series],
+            lons:  Union[List, np.ndarray, pd.Series],
+            lats:  Union[List, np.ndarray, pd.Series],
+        ):
         """
-        n_out = catalogue.shape[0]
-        # Setup initial dataframe
-        output_headers = ["strike_1", "dip_1", "rake_1", "strike_2", "dip_2", "rake_2",
-                          "eigen_t", "plunge_t", "strike_t", "eigen_n", "plunge_n", "strike_n",
-                          "eigen_p", "plunge_p", "strike_p", "m_rr", "m_tt", "m_pp", "m_rt",
-                          "m_rp", "m_tp", "focal_mechanism_author", "focal_mechanism_event_id"]
-        output_dframe = {}
-        for hdr in output_headers:
-            if hdr in ("focal_mechanism_author", "focal_mechanism_event_id"):
-                output_dframe[hdr] = [None] * n_out
+        """
+        d_t = np.timedelta64(time_window_s, "s")
+        # Build catalogue dataframe of early and latest time windows per event
+        early_times = []
+        late_times = []
+        for evt in self.events:
+            low_vals = []
+            high_vals = []
+            for orig in evt.origins:
+                orig_dt = np.datetime64(str(orig.time))
+                low_vals.append(orig_dt - d_t)
+                high_vals.append(orig_dt + d_t)
+            early_times.append(np.array(low_vals, dtype="datetime64").min())
+            late_times.append(np.array(high_vals, dtype="datetime64").max())
+        event_times = pd.DataFrame({"early": early_times, "late": late_times},
+                                   index=pd.Series(self.event_ids))
+        matched_events = {}
+        for eq_id, eq_time, lon, lat in zip(identifiers, times, lons, lats):
+            if isinstance(eq_time, str):
+                eq_time = np.datetime64(eq_time)
+            elif isinstance(eq_time, pd.Timestamp):
+                eq_time = eq_time.to_numpy()
             else:
-                output_dframe[hdr] = np.zeros(n_out)
-        output_dframe = pd.DataFrame(output_dframe)
-        print(output_dframe)
-        catalogue_groups = catalogue.groupby("event_id")
-        for evid, evidx in catalogue_groups.groups.items():
-            n = len(evidx)
-            grp = catalogue_groups.get_group(evid)
-            dt = (grp["event_time"].iloc[0] - self.dataframe["evt_time"]).dt.total_seconds()
-            tidx = np.fabs(dt) <= time_delta
-            if not np.any(tidx):
-                # No event within time window
+                pass
+            idx = (eq_time >= event_times["early"]) & (eq_time <= event_times["late"])
+            if not np.any(idx):
+                # No moment tensor found within time window
+                logging.info("No moment tensor within time window of event %s" % eq_id)
                 continue
+            matched_events[eq_id] = []
+            candidate_events = event_times.index[idx].to_list()
+            has_candidate = False
+            for candidate in candidate_events:
+                orig_lons = []
+                orig_lats = []
+                #orig_depths = []
+                candidate_eq = self[candidate]
+                for orig in candidate_eq.origins:
+                    orig_lons.append(orig.longitude)
+                    orig_lats.append(orig.latitude)
+                #    orig_depths.append(orig.depth / 1000.0) # Convert to km)
+                dists = geodetic.distance(lon, lat, 0.0,
+                                          np.array(orig_lons), np.array(orig_lats), 0.0)
+                didx = dists <= distance_window_km
+                if np.any(didx):
+                    matched_events[eq_id].append(candidate_eq)
+                    has_candidate = True
+            if has_candidate:
+                if len(matched_events[eq_id]) > 1:
+                    logging.info("Event %s matches with %g candidate moment tensors"
+                                 % (eq_id, len(matched_events[eq_id])))
+                else:
+                    logging.info("Event %s matches with moment tensor %s"
+                                 % (eq_id, matched_events[eq_id][0].resource_id.id))
+            else:
+                logging.info("No moment tensor within distance window of event %s" % eq_id)
+        return matched_events
 
-            candidate = self.dataframe[tidx]
-            distance = geodetic.distance(
-                grp["event_longitude"].iloc[0], grp["event_latitude"].iloc[0], 0.0,
-                candidate["evt_longitude"], candidate["evt_latitude"], 0.0)
-            ridx = distance <= distance_delta
-            if np.any(ridx):
-                # A match is found!
-                candidate = candidate[ridx]
-                if candidate.shape[0] > 1:
-                    # Find the nearest event in time
-                    dt_sel = dt[tidx][ridx]
-                    min_loc = np.argmin(dt_sel)
-                    candidate = candidate.iloc[min_loc]
-                print(evid, evidx, candidate)
-                for key in output_headers:
-                    if key == "focal_mechanism_author":
-                        output_dframe[key][evidx] = pd.Series([candidate[key].iloc[0]] * n,
-                                                              index=evidx)
-                    elif key == "focal_mechanism_event_id":
-                        output_dframe[key][evidx] = pd.Series([candidate["evt_id"].iloc[0]] * n,
-                                                              index=evidx)
-                    else:
-                        output_dframe[key][evidx] += candidate[key].iloc[0]
-        return output_dframe
+
+#    def find_matching_focal_mechanisms(
+#            self,
+#            catalogue: pd.DataFrame,
+#            time_delta: float = 30.0,
+#            distance_delta: float = 50.0
+#            ) -> pd.DataFrame:
+#        """Given an input earthquake catalogue, creates a dataframe with focal mechanism
+#        information and assigns the appropriate focal mechanism parameters to those earthquakes
+#        with corresponding focal mechanims in the database
+#
+#        Args:
+#            catalogue: Target catalogue for assigning focal mechanisms
+#            time_delta: Maximum time difference in seconds for matching events
+#            distance_delta: Maximum separation distance (in km) for matching events
+#        """
+#        n_out = catalogue.shape[0]
+#        # Setup initial dataframe
+#        output_headers = ["strike_1", "dip_1", "rake_1", "strike_2", "dip_2", "rake_2",
+#                          "eigen_t", "plunge_t", "strike_t", "eigen_n", "plunge_n", "strike_n",
+#                          "eigen_p", "plunge_p", "strike_p", "m_rr", "m_tt", "m_pp", "m_rt",
+#                          "m_rp", "m_tp", "focal_mechanism_author", "focal_mechanism_event_id"]
+#        output_dframe = {}
+#        for hdr in output_headers:
+#            if hdr in ("focal_mechanism_author", "focal_mechanism_event_id"):
+#                output_dframe[hdr] = [None] * n_out
+#            else:
+#                output_dframe[hdr] = np.zeros(n_out)
+#        output_dframe = pd.DataFrame(output_dframe)
+#        #print(output_dframe)
+#        catalogue_groups = catalogue.groupby("event_id")
+#        for evid, evidx in catalogue_groups.groups.items():
+#            n = len(evidx)
+#            grp = catalogue_groups.get_group(evid)
+#            dt = (grp["event_time"].iloc[0] - self.dataframe["evt_time"]).dt.total_seconds()
+#            tidx = np.fabs(dt) <= time_delta
+#            if not np.any(tidx):
+#                # No event within time window
+#                continue
+#
+#            candidate = self.dataframe[tidx]
+#            distance = geodetic.distance(
+#                grp["event_longitude"].iloc[0], grp["event_latitude"].iloc[0], 0.0,
+#                candidate["evt_longitude"], candidate["evt_latitude"], 0.0)
+#            ridx = distance <= distance_delta
+#            if np.any(ridx):
+#                # A match is found!
+#                candidate = candidate[ridx]
+#                if candidate.shape[0] > 1:
+#                    # Find the nearest event in time
+#                    dt_sel = dt[tidx][ridx]
+#                    min_loc = np.argmin(dt_sel)
+#                    candidate = candidate.iloc[min_loc]
+#                if verbose:
+#                    logging.info("{:s}: {:s} {:s}".format(evid, evidx, str(candidate)))
+#                for key in output_headers:
+#                    if key == "focal_mechanism_author":
+#                        output_dframe[key][evidx] = pd.Series([candidate[key].iloc[0]] * n,
+#                                                              index=evidx)
+#                    elif key == "focal_mechanism_event_id":
+#                        output_dframe[key][evidx] = pd.Series([candidate["evt_id"].iloc[0]] * n,
+#                                                              index=evidx)
+#                    else:
+#                        output_dframe[key][evidx] += candidate[key].iloc[0]
+#        return output_dframe

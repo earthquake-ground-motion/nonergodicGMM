@@ -5,6 +5,7 @@ import math
 from typing import Optional, Tuple, Dict
 import numpy as np
 from scipy.special import gamma, kv
+from scipy.linalg import cho_solve, cho_factor
 
 
 class KernelFunction():
@@ -134,6 +135,47 @@ KERNELS = {
     "Matern": Matern,
     "NegativeExponentialSpatiallyIndependent": NegativeExponentialSpatiallyIndependent
 }
+
+
+def predict_nonergodic_coefficients_fast(
+        g_prdct: np.ndarray,
+        g_train: np.ndarray,
+        c_train_mu: np.ndarray,
+        kernel: str,
+        parameters: Dict,
+        c_train_sig: Optional[np.ndarray] = None,
+        hyp_mean_c: float = 0.0,
+        hyp_omega: float = 0.0,
+        delta: float = 1.0E-9,
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    """
+    assert kernel in list(KERNELS)
+    c_train_mu = c_train_mu - hyp_mean_c
+    if c_train_sig is None:
+        c_train_sig = np.zeros(len(c_train_mu))
+    c_train_cov = np.diag(c_train_sig ** 2.0) if c_train_sig.ndim == 1 else c_train_sig
+    # Generate the covariance matrices
+    # i) within the training data
+    kupper = KERNELS[kernel](g_train, g_train, parameters, delta).covariance
+    # ii) between training data and new locations
+    klower = KERNELS[kernel](g_prdct, g_train, parameters, 0.0).covariance
+    # iii) within new locations
+    kstar = KERNELS[kernel](g_prdct, g_prdct, parameters, 0.0).covariance
+
+    #kupper_inv = np.linalg.inv(kupper)
+    #klowupp_inv = klower.dot(kupper_inv)
+    #klowupp_inv = solve(kupper, klower.T, assume_a="pos").T
+    klowupp_inv = cho_solve(cho_factor(kupper), klower.T).T
+    # Posterior mean and variance at new locations
+    c_prdct_mu = klowupp_inv.dot(c_train_mu)
+    c_prdct_cov = kstar - klowupp_inv.dot(klower.transpose()) +\
+        klowupp_inv.dot(c_train_cov.dot(klowupp_inv.transpose()))
+    # Posterior standard deviation at new locations
+    c_prdct_sig = np.sqrt(np.diag(c_prdct_cov))
+    # Add mean from training coefficients
+    c_prdct_mu += hyp_mean_c
+    return c_prdct_mu, c_prdct_sig, c_prdct_cov
 
 
 def predict_nonergodic_coefficients(
