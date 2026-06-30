@@ -6,13 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "nonergodicGMM"
 version = "0.0.1"
 authors = [
-  { name="Graeme Weatherill", email="graeme.weatherill@gfz-potsdam.de" },
+  { name="Graeme Weatherill", email="graeme.weatherill@gfz.de" },
 ]
 description = "A module for managing the development and updating of nonergodic GMMs"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
-    "openquake.engine>=3.19",
+    "openquake.engine>=3.25",
     "numexpr",
     "Rtree",
     "geopandas",
