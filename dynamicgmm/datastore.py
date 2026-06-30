@@ -141,7 +141,7 @@ class DatastoreByEvent():
         periods: Optional[np.ndarray] = DEFAULT_PERIODS,
         frequencies: Optional[np.ndarray] = DEFAULT_FREQUENCIES,
         response_spectrum_units: Optional[str] = "cm/s/s",
-        fas_units: Optional[str] = "cms/s/s",
+        fas_units: Optional[str] = "cm/s/s",
         significant_duration_definition: Optional[Tuple] = (0.05, 0.95),
         cav_threshold: Optional[float] = 0.0,
         damping: Optional[float] = 0.05,
