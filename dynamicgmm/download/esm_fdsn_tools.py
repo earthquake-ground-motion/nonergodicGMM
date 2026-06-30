@@ -50,6 +50,7 @@ FDSN_SPECS = {
     "catalog": (str, VALID_CATALOG),
     "level": (str, VALID_LEVELS),
     "network": (str,),
+    "station": (str,),
     "location": (str,),
     "channel": (str,),
     "processing-type": (str, VALID_PROCESSING_TYPES),

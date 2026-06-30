@@ -475,7 +475,7 @@ class Flatfile():
             dset = fle.create_dataset(key, (nrow,), dtype="i")
             dset[:] = distance_matrix[key].to_numpy()
         dist_dset = fle.create_dataset("distance", (nrow, ncol - 3), dtype="f")
-        dist_dset[:] = distance_matrix[:, 3:].to_numpy()
+        dist_dset[:] = distance_matrix.to_numpy()[:, 3:]
         fle.close()
         logging.info("Distance Matrix exported to %s" % filename)
         return
