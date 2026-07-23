@@ -6,22 +6,45 @@ build-backend = "setuptools.build_meta"
 name = "nonergodicGMM"
 version = "0.0.1"
 authors = [
-  { name="Graeme Weatherill", email="graeme.weatherill@gfz-potsdam.de" },
+  { name="Graeme Weatherill", email="graeme.weatherill@gfz.de" },
 ]
 description = "A module for managing the development and updating of nonergodic GMMs"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
-    "openquake.engine>=3.19",
+    "requests",
+    "PyYAML"
+    "openquake.engine>=3.25",
     "numexpr",
     "Rtree",
-    "geopandas",
     "obspy",
 ]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GPL-3.0 license",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Natural Language :: English",
     "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist>=3.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+docs = [
+    "pdoc>=14.0.0",
 ]
 
 [project.urls]
