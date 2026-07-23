@@ -45,7 +45,6 @@ class ASDFEventHandler():
         "focal_mechanism": "focal_mechanism",
         "network": "network",
         "vs30_m_s": "vs30",
-        "vs30_m_s_from_geology": "vs30_geology",
         "vs30_m_s_from_topography": "vs30_topography",
         "vs30_m_s_from_vs_profile": "vs30_vs_profile",
         "station_code": "station_code",
@@ -54,6 +53,7 @@ class ASDFEventHandler():
         "high_cut_frequency_hz": "high_cut_freq",
         "filter_type": "filter_type",
         "filter_order": "filter_order",
+        "class": "class",
         }
 
     def __init__(self, fname: str, calculate_response_spectrum: bool = True,
