@@ -1,14 +1,19 @@
 """
 Tools to access and download ESM data
 """
-
-import os
+import io
+# import os
+# import json
 import logging
 import requests
+import datetime
 from requests.exceptions import HTTPError
 from copy import deepcopy
-from typing import Dict, Union
+from typing import Dict, Union, List, Optional
 import numpy as np
+import pandas as pd
+from openquake.hazardlib.geo import Point, PlanarSurface, MultiSurface
+from openquake.hazardlib.geo.surface.base import BaseSurface
 import obspy
 
 logging.basicConfig(level=logging.INFO)
@@ -92,15 +97,6 @@ def construct_query_url(query_type: str, config: Dict, base_url: str) -> str:
     Returns:
         FDSN query URL
     """
-#    if query_type == "event":
-#        base_url = EVENT_QUERY_BASE_URL
-#    elif query_type == "station":
-#        base_url = STATION_QUERY_BASE_URL
-#    elif query_type == "waveform":
-#        base_url = DATA_QUERY_BASE_URL
-#    else:
-#        raise ValueError(f"Query type {query_type} not recognised -"
-#                         " must be one of 'event', 'station' or 'waveform'")
     query = []
     for fdsnkey, arg in config.items():
         if fdsnkey not in FDSN_SPECS:
@@ -115,7 +111,7 @@ def construct_query_url(query_type: str, config: Dict, base_url: str) -> str:
                 "FDSN option %s has invalid type" % fdsnkey
             if isinstance(val, str) and len(fdsn_spec) > 1:
                 assert val in fdsn_spec[1], \
-                    "Categorical value {:s} for FDSN option {:s} not in valid list: {:s}".format(
+                    "Categorical value {:s} for option {:s} not in valid list: {:s}".format(
                     val, fdsnkey, str(fdsn_spec[1])
                 )
             if (isinstance(val, float) or isinstance(val, int)) and (len(fdsn_spec) == 3):
@@ -141,8 +137,6 @@ class ESMEventWebService():
         self.url = construct_query_url("event", config, self.BASE_URL)
         self.catalogue = []
         self.event_ids = []
-
-        # self._get_events()
 
     def __len__(self):
         return len(self.catalogue)
@@ -276,7 +270,7 @@ class ESMWaveformWebService():
         else:
             logging.info("---- Failed download")
             logging.info("---- %s" % response.reason)
-        return
+        return response.status_code, response.reason
 
 
 class SeismicPortalWebService(ESMEventWebService):
@@ -302,13 +296,210 @@ class GEOFONEventWebService(ESMEventWebService):
     SERVICE = "GEOFON Event Webservice"
     EVENT_ID_STRIP = "smi:org.gfz-potsdam.de/geofon/"
 
-#    def download_waveforms(self):
-#        """
-#        """
-#        logging.info("Query URL: %s" % self.url)
-#        download_command = ["curl", "-X", "POST", self.url, "-o", self.filename]
-#        logging.info("Running command %s" % " ".join(download_command))
-#        completed_process = subprocess.run(download_command, check=True)
-#        logging.info("Run. Return Code %g" % completed_process.returncode)
-#        assert os.path.exists(self.filename)
-#        return
+
+ESM_FAULT_WS_SPECS = {
+    "eventid": (str, ),
+    "output-format": (str, {"json", "text", }),
+    "empirical-fault": (bool, ),
+    "indent": (bool, ),
+    "includeallfaults": (bool, ),
+}
+
+
+class ESMFaultWebservice():
+    """Class to manage download and processing of fault data from the ESM Fault Service
+    https://esm-db.eu/esmws/fault/1/
+    """
+    BASE_URL = "https://esm-db.eu/esmws/fault/1/query?"
+
+    def __init__(self, config):
+        self.config = config
+        self.config["output-format"] = config.get("output-format", "json")
+        assert self.config["output-format"] in ["json", "text", "shapefile"], \
+            "Fault file format must be one of 'json', 'text' or 'shapefile'"
+        self.config["indent"] = config.get("indent", True)
+        self.config["includeallfaults"] = config.get("includeallfaults", True)
+        self.faults = {}
+
+    def _build_url(self, eventid: Optional[str] = None):
+        """Constructs the URL from the query options
+        """
+        if eventid:
+            query_opts = [f"eventid={eventid}",]
+        else:
+            query_opts = []
+        for key, val in self.config.items():
+            if key == "eventid" and eventid is not None:
+                continue
+            query_opts.append(f"{key}={str(val)}")
+        return self.BASE_URL + "&".join(query_opts)
+
+    def get_fault_data(self, event_ids: List):
+        """Downloads the fault data for a set of events and parses the faults into
+        and OpenQuake Planar or MultiSurface object where available.
+
+        Args:
+            event_ids: List of event IDs
+        """
+        raw_fault_data = self._get_raw_fault_data(event_ids)
+        if not raw_fault_data:
+            logging.info("No raw fault data obtained")
+            return
+        for ev_id, raw_fault in raw_fault_data.items():
+            if not raw_fault:
+                continue
+            if self.config["output-format"] == "json":
+                self.faults[ev_id] = self.parse_json_fault_data_to_OQ_surface(raw_fault)
+            else:
+                raise NotImplementedError("Parser for fault data type not supported")
+        return
+
+    def _get_raw_fault_data(self, event_ids: List) -> Dict:
+        """Download the raw fault data from the webservice
+        """
+        raw_fault_info = {}
+        for event_id in event_ids:
+            event_url = self._build_url(event_id)
+            logging.info("Querying event ID %s" % event_id)
+            logging.info(event_url)
+            raw_data = requests.get(event_url)
+            if raw_data.status_code != 200:
+                logging.info("Unsuccessful - status code %s (%s)"
+                             % (raw_data.status_code, raw_data.reason))
+                raw_fault_info[event_id] = None
+            else:
+                if self.config["output-format"] == "json":
+                    raw_fault_info[event_id] = raw_data.json()
+                elif self.config["output-format"] == "text":
+                    raw_fault_info[event_id] = pd.read_csv(
+                        io.StringIO(raw_data.content.decode("utf-8")),
+                        sep=";"
+                        )
+                else:
+                    raise NotImplementedError
+                logging.info("Successful!")
+        return raw_fault_info
+
+    @staticmethod
+    def parse_json_fault_data_to_OQ_surface(fault_data: Dict) -> BaseSurface:
+        """Converts the JSON fault data from the ESM Fault Webservice into an OpenQuake
+        planar fault surface
+
+        Args:
+            fault_data: Fault data for an individual rupture in the json dict format
+        Returns:
+            OpenQuake Planar or MultiSurface
+        """
+        pref_id = fault_data["preferred_source_id"]
+        fault_surfaces = {}
+        for source in fault_data["sources"]:
+            source_id = source["source_id"]
+            fault_surfaces[source_id] = {
+                "ID": source_id,
+                "Name": source["source_name"],
+                "preferred": source_id == pref_id,
+                "surface": None,
+                "rake": None,
+            }
+            segments = []
+            for seg_id, segment in source["segment_id"].items():
+                if segment["Z_top"] is None or segment["Z_bottom"] is None:
+                    # Fault surface cannot be constructed
+                    logging.info(f"---- Source {source_id} segment {seg_id} missing a depth")
+                    break
+                top_left = Point(segment["UL_lon"], segment["UL_lat"], segment["Z_top"])
+                top_right = Point(segment["UR_lon"], segment["UR_lat"], segment["Z_top"])
+                bottom_right = Point(segment["LR_lon"], segment["LR_lat"], segment["Z_bottom"])
+                bottom_left = Point(segment["LL_lon"], segment["LL_lat"], segment["Z_bottom"])
+                try:
+                    surface = PlanarSurface.from_corner_points(
+                        top_left, top_right, bottom_right, bottom_left
+                    )
+                except ValueError:
+                    logging.info("Surface construction failed for Event-Source-Segment "
+                                 f"{fault_data['Event_id']}-{source['source_id']}-{seg_id}")
+                    # Failed rupture - so reset the number of segments to none
+                    segments = []
+                    break
+                orig_strike = segment["strike"]
+                orig_dip = segment["dip"]
+                orig_length = segment["Length"]
+                orig_width = segment["Width"]
+                sfc_strike = surface.get_strike()
+                sfc_dip = surface.get_dip()
+                sfc_width = surface.get_width()
+                sfc_length = surface.get_area() / sfc_width
+                logging.info(
+                    "Comparison:\n Strike {:.2f}|{:.2f}, Dip {:.2f}|{:.2f} "
+                    "Length {:.2f}|{:.2f}, Width {:.2f}|{:.2f}".format(
+                        orig_strike, sfc_strike,
+                        orig_dip, sfc_dip,
+                        orig_length, sfc_length,
+                        orig_width, sfc_width
+                    )
+                )
+                segments.append((surface, segment["rake"]))
+            if not len(segments):
+                continue
+            if len(segments) > 1:
+                surfaces = []
+                areas = []
+                rakes = []
+                for sfc, rake in segments:
+                    surfaces.append(sfc)
+                    areas.append(sfc.get_area())
+                    if rake is None:
+                        rakes.append(np.nan)
+                    else:
+                        rakes.append(rake)
+                areas = np.array(areas)
+                weights = areas / np.cumsum(areas)
+                rakes = np.array(rakes)
+                rakes[np.isnan(rakes)] = np.nanmean(rakes)
+                fault_surfaces[source_id]["surface"] = MultiSurface(surfaces)
+                fault_surfaces[source_id]["rake"] = float(np.sum(weights * rakes))
+            else:
+                fault_surfaces[source_id]["surface"] = segments[0][0]
+                fault_surfaces[source_id]["rake"] = segments[0][1]
+        return fault_surfaces
+
+
+class ESMEventProcessingUpdateWebservice():
+    """Retreives a dictionary containing the list of events whose data and/or metadata
+    have been updated after a specific date
+    """
+    BASE_URL = "https://esm-db.eu/esmws/event-processing-update/1/query?"
+
+    def __init__(self, config):
+        self.config = config
+        self.config["ptype"] = config.get("ptype", "all")
+        self.info = None
+
+    def _build_query_url(self):
+        """Constructs the query url
+        """
+        query_args = []
+        for key, val in self.config.items():
+            query_args.append(f"{key}={str(val)}")
+        return self.BASE_URL + "&".join(query_args)
+
+    def get_update_information(self, updated_after: Union[str, datetime.date]):
+        """Get the list of events updated after a specific date
+        """
+        self.config["updatedafter"] = str(updated_after)
+        query_url = self._build_query_url()
+        logging.info("Querying Event-Processing Update Webservice: \n%s" % query_url)
+        raw_data = requests.get(query_url)
+        if raw_data.status_code == 200:
+            # Successful query
+            self.info = raw_data.json()
+            return
+        # Error handling
+        if raw_data.status_code == 204:
+            # No content error
+            logging.info("Successful query - No content")
+        else:
+            # Other error
+            logging.info("Unsuccessful - status code %s (%s)"
+                         % (raw_data.status_code, raw_data.reason))
+        return
