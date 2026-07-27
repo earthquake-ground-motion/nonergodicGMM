@@ -9,7 +9,7 @@ import shutil
 import pathlib
 import requests
 from copy import deepcopy
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import toml
 import h5py
 import numpy as np
@@ -42,7 +42,8 @@ def spawn_configs(
     template_file: pathlib.Path,
     time_limits: List,
     config_directory: pathlib.Path,
-    output_directory: pathlib.Path
+    output_directory: pathlib.Path,
+    reset: bool = False
 ):
     """Spawn the set of configuration files and sub-directories to download by month
 
@@ -54,14 +55,18 @@ def spawn_configs(
     """
     with open(str(template_file), "r") as f:
         template_config = toml.load(f)
-    # Remove existing output directory and make a new one
-    if output_directory.exists():
-        shutil.rmtree(str(output_directory))
-    output_directory.mkdir()
-    # Remove existing config directory and make a new one
-    if config_directory.exists():
-        shutil.rmtree(str(config_directory))
-    config_directory.mkdir()
+
+    if reset:
+        # Remove existing output directory and make a new one
+        if output_directory.exists():
+            shutil.rmtree(str(output_directory))
+        # Remove existing config directory and make a new one
+        if config_directory.exists():
+            shutil.rmtree(str(config_directory))
+    if not output_directory.exists():
+        output_directory.mkdir()
+    if not config_directory.exists():
+        config_directory.mkdir()
     for start_time, end_time, target_dir in time_limits:
         config = deepcopy(template_config)
         s_t = datetime.datetime.fromisoformat(start_time)
@@ -114,7 +119,7 @@ class ORFEUSStrongMotionDownloader():
         """
         self.config = deepcopy(config)
         self.output_directory = pathlib.Path(config["output-folder"])
-        
+
         logging.info("---- Exports to directory %s" % str(self.output_directory))
         if not self.output_directory.exists():
             self.output_directory.mkdir()
@@ -292,7 +297,10 @@ def build_orfeus_strong_motion_full_download(
     config_directory: str,
     output_directory: str,
     template_config: str,
-    run_type: str = "wet"
+    run_type: str = "wet",
+    start_time: Optional[datetime.datetime] = None,
+    end_time: Optional[datetime.datetime] = None,
+    reset: bool = False,
 ):
     """Runs a full clean download of data from ESM and/or RRSM
 
@@ -306,14 +314,14 @@ def build_orfeus_strong_motion_full_download(
     """
 
     # Get the start and end times
-    start_end_times = get_start_end_times()
+    start_end_times = get_start_end_times(start_time, end_time)
     config_directory = pathlib.Path(config_directory)
     output_directory = pathlib.Path(output_directory)
     template_config = pathlib.Path(template_config)
 
     # Build the configurations and output directories
     logging.info("Setting up configs and output directories")
-    spawn_configs(template_config, start_end_times, config_directory, output_directory)
+    spawn_configs(template_config, start_end_times, config_directory, output_directory, reset)
 
     # Start to run the download jobs
     config_files = list(config_directory.iterdir())
