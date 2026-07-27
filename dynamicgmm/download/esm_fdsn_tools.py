@@ -128,6 +128,8 @@ class ESMEventWebService():
     SERVICE = "ESM Webservice Event Catalogue"
     EVENT_ID_STRIP = "smi:esm-db.eu/fdsnws/event/1/query?event_id="
 
+    SPLIT_DAYS = 5
+
     def __init__(self, config):
         """
         """
@@ -167,6 +169,9 @@ class ESMEventWebService():
             if str(he).startswith("204 HTTP Error: No Content for url"):
                 logging.info("Catalogue contains no events")
                 return
+            elif str(he).startswith("413 HTTP Error: Request Entity Too Large for url"):
+                # Hit the request limit - split the query
+                catalogue = self._split_event_query()
             else:
                 # Something else is wrong, so raise the error!
                 raise
@@ -189,6 +194,45 @@ class ESMEventWebService():
         for ev in self.catalogue:
             self.event_ids.append(ev.resource_id.id.replace(self.EVENT_ID_STRIP, ""))
         return
+
+    def _split_event_query(self, ndays: Optional[int] = None):
+        """If a query exceeds the download limit then split into a sub-queries of `ndays` each
+        """
+        if not ndays:
+            ndays = self.SPLIT_DAYS
+        d_t = datetime.timedelta(days=ndays)
+        starttime = datetime.datetime.fromisoformat(self.config["starttime"])
+        endtime = datetime.datetime.fromisoformat(self.config["endtime"])
+        time_set = [starttime,]
+        while time_set[-1] < endtime:
+            new_time = time_set[-1] + d_t
+            if new_time < endtime:
+                time_set.append(new_time)
+            else:
+                break
+        time_set.append(endtime)
+        tmp_config = deepcopy(self.config)
+        sub_catalogue = None
+        for i in range(len(time_set) - 1):
+            tmp_config["starttime"] = time_set[i].isoformat()
+            tmp_config["endtime"] = time_set[i + 1].isoformat()
+            tmp_url = construct_query_url("event", tmp_config, self.BASE_URL)
+            logging.info("Split-catalogue query temp. url:  %s" % tmp_url)
+            try:
+                catalogue = obspy.read_events(tmp_url, format="QUAKEML")
+            except HTTPError as he:
+                # If a 204 HTTP Error is returned then there is no content
+                if str(he).startswith("204 HTTP Error: No Content for url"):
+                    logging.info("Catalogue contains no events")
+                    continue
+                else:
+                    # Something else is wrong, so raise the error!
+                    raise
+            if sub_catalogue is None:
+                sub_catalogue = catalogue
+            else:
+                sub_catalogue += catalogue
+        return sub_catalogue
 
 
 class ESMStationWebservice():
