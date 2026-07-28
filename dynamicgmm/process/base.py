@@ -4,7 +4,7 @@ from typing import List, Dict, Optional, Union, Tuple
 import logging
 import h5py
 import numpy as np
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 import dynamicgmm.process.intensity_measures as ims
 from dynamicgmm.process.konno_ohmachi import KonnoOhmachi
 from dynamicgmm.process.sm_utils import convert_accel_units
@@ -302,7 +302,7 @@ class Waveform():
         """Returns the velocity trace
         """
         if self._velocity is None:
-            self._velocity = self.dt * cumtrapz(self.acceleration, initial=0.0)
+            self._velocity = self.dt * cumulative_trapezoid(self.acceleration, initial=0.0)
         return self._velocity
 
     @property
@@ -310,7 +310,7 @@ class Waveform():
         """Returns the displacement trace
         """
         if self._displacement is None:
-            self._displacement = self.dt * cumtrapz(self.velocity, initial=0.0)
+            self._displacement = self.dt * cumulative_trapezoid(self.velocity, initial=0.0)
         return self._displacement
 
     @property
