@@ -1,21 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
-#
-# Copyright (C) 2014-2017 GEM Foundation and G. Weatherill
-#
-# OpenQuake is free software: you can redistribute it and/or modify it
-# under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# OpenQuake is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
 """
 Strong motion utilities.
 """
@@ -26,9 +11,8 @@ import os
 import sys
 import re
 import numpy as np
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 from scipy.constants import g
-
 from openquake.hazardlib.gsim import get_available_gsims
 from openquake.hazardlib.scalerel.peer import PeerMSR
 from openquake.hazardlib.gsim.gmpe_table import GMPETable
@@ -171,9 +155,9 @@ def get_velocity_displacement(time_step, acceleration, units="cm/s/s",
     """
     acceleration = convert_accel_units(acceleration, units)
     if velocity is None:
-        velocity = time_step * cumtrapz(acceleration, initial=0.)
+        velocity = time_step * cumulative_trapezoid(acceleration, initial=0.)
     if displacement is None:
-        displacement = time_step * cumtrapz(velocity, initial=0.)
+        displacement = time_step * cumulative_trapezoid(velocity, initial=0.)
     return velocity, displacement
 
 

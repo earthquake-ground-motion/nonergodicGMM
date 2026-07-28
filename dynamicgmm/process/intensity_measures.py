@@ -2,20 +2,6 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2014-2017 GEM Foundation and G. Weatherill
-#
-# OpenQuake is free software: you can redistribute it and/or modify it
-# under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# OpenQuake is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
 
 """
 General Class for extracting Ground Motion Intensity Measures (IMs) from a
@@ -24,7 +10,7 @@ set of acceleration time series
 from multiprocessing import Pool, cpu_count
 import numpy as np
 from math import pi, sqrt
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 from scipy import constants
 import numba
 import matplotlib.pyplot as plt
@@ -185,12 +171,12 @@ def get_peak_measures(time_step, acceleration, get_vel=False, get_disp=False):
     if get_disp:
         get_vel = True
     if get_vel:
-        velocity = time_step * cumtrapz(acceleration, initial=0.)
+        velocity = time_step * cumulative_trapezoid(acceleration, initial=0.)
         pgv = np.max(np.fabs(velocity))
     else:
         pgv = None
     if get_disp:
-        displacement = time_step * cumtrapz(velocity, initial=0.)
+        displacement = time_step * cumulative_trapezoid(velocity, initial=0.)
         pgd = np.max(np.fabs(displacement))
     else:
         pgd = None
@@ -715,7 +701,7 @@ def get_husid(acceleration, time_step):
         Time-step of record (s)
     """
     time_vector = get_time_vector(time_step, len(acceleration))
-    husid = np.hstack([0., cumtrapz(acceleration ** 2., time_vector)])
+    husid = np.hstack([0., cumulative_trapezoid(acceleration ** 2., time_vector)])
     return husid, time_vector
 
 

@@ -9,12 +9,12 @@ import json
 import numpy as np
 import logging
 from typing import Union, List, Dict, Optional, Tuple
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 import pandas as pd
 from scipy.constants import g
 from obspy import read_events, read_inventory
 from dynamicgmm.process.base import (
-    ResponseSpectrum, FourierSpectrum, Waveform, Record, # get_horizontal_spectrum,
+    ResponseSpectrum, FourierSpectrum, Waveform, Record,
     DEFAULT_PERIODS,
     )
 import dynamicgmm.process.intensity_measures as ims
