@@ -718,6 +718,9 @@ def get_arias_intensity(acceleration, time_step, start_level=0., end_level=1.):
     husid_norm = husid / husid[-1]
     idx = np.where(np.logical_and(husid_norm >= start_level,
                                   husid_norm <= end_level))[0]
+    if not len(idx):
+        # Record contained only zeros
+        return np.nan
     if len(idx) < len(acceleration):
         husid, time_vector = get_husid(acceleration[idx], time_step)
     return ARIAS_FACTOR * husid[-1]
@@ -786,6 +789,8 @@ def get_significant_duration(acceleration, time_step, start_level=0.,
     husid, time_vector = get_husid(acceleration, time_step)
     idx = np.where(np.logical_and(husid >= (start_level * husid[-1]),
                                   husid <= (end_level * husid[-1])))[0]
+    if not len(idx):
+        return 0.0
     return time_vector[idx[-1]] - time_vector[idx[0]] + time_step
 
 

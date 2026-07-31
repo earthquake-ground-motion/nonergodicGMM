@@ -1,11 +1,17 @@
 import os
+import io
 from copy import deepcopy
+import datetime
+import tomllib
+import pathlib
 from typing import List, Dict, Tuple, Optional, Union
 import logging
+from multiprocessing import cpu_count
 import h5py
 import numpy as np
 import pandas as pd
 from scipy.interpolate import make_interp_spline
+from obspy import read_events
 from dynamicgmm.process.base import (
     DEFAULT_FREQUENCIES,
     DEFAULT_PERIODS,
@@ -25,7 +31,8 @@ def ims_to_array_set(
         im_config: Dict,
         periods: np.ndarray,
         frequencies: np.ndarray,
-        grp: Optional[h5py.Group] = None
+        grp: Optional[h5py.Group] = None,
+        append: bool = False
 ):
     """Converts a set of intensity measures from mutiple records into single arrays and
     (optionally) stores these to hdf5
@@ -77,40 +84,93 @@ def ims_to_array_set(
             else:
                 pass
     if grp:
-        # Add to a group object
-        for key, data in output.items():
-            if key == "record_id":
-                rid_dset = grp.create_dataset(
-                    key, data.shape,
-                    dtype=h5py.string_dtype()
-                )
-                rid_dset[:] = data
-            else:
-                dset = grp.create_dataset(key, data.shape, dtype=data.dtype)
-                dset[:] = data
-                if key == "EAS_smoothed":
-                    # For the smoothed EAS then store the config parameters controlling
-                    # the smoothing
-                    dset.attrs["bandwidth"] = \
-                        im_config[key]["konno_ohmachi_kwargs"].get("bandwidth", 40)
-                    dset.attrs["normalize"] = \
-                        im_config[key]["konno_ohmachi_kwargs"].get("normalize", False)
-                elif (key in im_config) and im_config[key]:
-                    # If there are further configuration parameters for the data then store
-                    # these
-                    for subkey, val in im_config[key].items():
-                        if subkey == "limits":
-                            # Is a tuple of (lowe, upper), so store separately
-                            dset.attrs["lower_limit"] = val[0]
-                            dset.attrs["upper_limit"] = val[1]
-                        else:
-                            dset.attrs[subkey] = val
+        if "record_id" in list(grp):
+            # Append to an existing data set
+            for key, data in output.items():
+                if key in ["frequencies", "periods",]:
+                    # Static: don't touch these here
+                    continue
                 else:
-                    pass
+                    # Resize the dataset with the new data
+                    orig_size = grp[key].shape[0]
+                    grp[key].resize(orig_size + data.shape[0], axis=0)
+                    grp[key][orig_size:] = data
+        else:
+            # Add to a clean, empty group object
+            for key, data in output.items():
+                if key in ["frequencies", "periods"]:
+                    # Not resizable
+                    dset = grp.create_dataset(key, data.shape, dtype=data.dtype)
+                    dset[:] = data
+                elif key == "record_id":
+                    # Can be re-sizable but takes string datatype
+                    rid_dset = grp.create_dataset(
+                        key, data.shape,
+                        maxshape=(None,),
+                        chunks=True,
+                        dtype=h5py.string_dtype()
+                    )
+                    rid_dset[:] = data
+                elif key == "scalar_ims":
+                    # Single dimension but structured array, resizable
+                    dset = grp.create_dataset(key, data.shape,
+                                              maxshape=(None,),
+                                              chunks=True,
+                                              dtype=data.dtype)
+                    dset[:] = data
+                else:
+                    # Spectra (2D array), resizable along 0 axis
+                    dset = grp.create_dataset(key, data.shape,
+                                              maxshape=(None, data.shape[1]),
+                                              chunks=True,
+                                              dtype=data.dtype)
+                    dset[:] = data
+                    # Add on attributes
+                    if key == "EAS_smoothed":
+                        # For the smoothed EAS then store the config parameters controlling
+                        # the smoothing
+                        dset.attrs["bandwidth"] = \
+                            im_config[key]["konno_ohmachi_kwargs"].get("bandwidth", 40)
+                        dset.attrs["normalize"] = \
+                            im_config[key]["konno_ohmachi_kwargs"].get("normalize", False)
+                    elif (key in im_config) and im_config[key]:
+                        # If there are further configuration parameters for the data then store
+                        # these
+                        for subkey, val in im_config[key].items():
+                            if subkey == "limits":
+                                # Is a tuple of (lowe, upper), so store separately
+                                dset.attrs["lower_limit"] = val[0]
+                                dset.attrs["upper_limit"] = val[1]
+                            else:
+                                dset.attrs[subkey] = val
+                    else:
+                        pass
 
         return
     else:
         return output
+
+
+# For storing strings in metadata this determines a fixed itemsize
+# This avoids pandas.HDFStore raising an error if appending a new metadata
+# table to an existing one but one of the text columns in the new table has
+# an entry longer than the maximum entry of the original table
+METADATA_MIN_ITEMSIZE = {
+    "event_id": 60,
+    "event_time": 30,
+    "event_origin_author": 80,
+    "event_preferred_mag_type": 12,
+    "event_preferred_mag_author": 80,
+    "network": 6,
+    "station": 8,
+    "channel": 3,
+    "station_id": 16,
+    "station_code": 10,
+    "station_name": 120,
+    "filter_type": 20,
+    "class": 10,
+    "record_id": 76
+}
 
 
 class DatastoreByEvent():
@@ -146,7 +206,8 @@ class DatastoreByEvent():
         cav_threshold: Optional[float] = 0.0,
         damping: Optional[float] = 0.05,
         num_proc: Optional[int] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        skip_existing: bool = False
     ):
         """Adds data from a set of events, each event a single ASDF file
         containing the records from multiple stations
@@ -177,10 +238,18 @@ class DatastoreByEvent():
             if not os.path.exists(fname):
                 logging.info("File %s not found - skipping!" % fname)
                 continue
-
             if fname.endswith("hdf5") or fname.endswith("asdf"):
                 # Use the ASDF parser
                 # Get the event metadata
+                if skip_existing:
+                    event_id = asdf.extract_event_ids(fname)[0]
+                    fle = h5py.File(fname, "r")
+                    if ("events" in list(fle)) and (event_id in list(fle["events"])):
+                        # Event is already in the file
+                        logging.info(f"Event {event_id} already in datastore - skipping")
+                        fle.close()
+                        continue
+
                 if self.verbose:
                     logging.info("Processing records from file %s" % fname)
                 handler = asdf.ASDFEventHandler(fname)
@@ -199,10 +268,15 @@ class DatastoreByEvent():
                 )
                 event_metadata = self.event_metadata_from_asdf(handler, verbose=self.verbose)
                 event_id = list(handler.events)[0]
-                with pd.HDFStore(self.dbname, "a") as store:
-                    store.put("events/{:s}/{:s}/metadata".format(event_id, self.data_provider),
-                              event_metadata)
-                # Get the waveform data
+                with pd.HDFStore(self.dbname, mode="a") as store:
+                    key = f"events/{event_id}/{self.data_provider}/metadata"
+                    if key in store:
+                        # Existing metadata for this event, so concatenate the old and new
+                        # dataframes
+                        store.append(key, event_metadata, format="table", index=False)
+                    else:
+                        store.append(key, event_metadata, format="table", index=False,
+                                     min_itemsize=METADATA_MIN_ITEMSIZE)
             elif fname.endswith("mseed"):
                 # miniseed parser
                 raise NotImplementedError("mseed not yet supported")
@@ -222,8 +296,6 @@ class DatastoreByEvent():
         # handler = asdf.ASDFEventHandler(fname, verbose=verbose)
         metadata = []
         for event_id, station, records in handler:
-            # pref_origin_id = handler.events[event_id].preferred_origin_id
-            # pref_mag_id = handler.events[event_id].preferred_magnitude_id
             pref_origin = handler.events[event_id].preferred_origin()
             pref_mag = handler.events[event_id].preferred_magnitude()
             event_metadata = {
@@ -281,15 +353,36 @@ class DatastoreByEvent():
         """Calculates the intensity measures and metadata and then stores these to an hdf5 file
         """
         db = h5py.File(self.dbname, "a")
-        # Data stored in the group events
+        # Data stored in the group 'events'
         if "events" not in list(db):
+            # Clean file, no events groupd created
             events_group = db.create_group("events")
         else:
             events_group = db["events"]
         intensity_measures = {}
         for ev_id, station, record in handler:
+            # Join together the intensity measure set and store to hdf5
+            if ev_id not in list(events_group):
+                # Event not in file yet, create the groups for the event and the data provider
+                event_group = events_group.create_group(ev_id)
+                provider_group = event_group.create_group(self.data_provider)
+                # No record IDS yet
+                rec_ids = []
+            else:
+                # Event is already in the group, add on info
+                event_group = events_group[ev_id]
+                provider_group = events_group[f"{ev_id}/{self.data_provider}"]
+                if "record_id" in list(provider_group):
+                    rec_ids = provider_group["record_id"][:].tolist()
+                else:
+                    rec_ids = []
+
             for rec_id, rec in record.items():
+                if rec_id in rec_ids:
+                    # Record is already in the data file, skip
+                    continue
                 if rec_id in intensity_measures:
+                    # Record is alreadty in the IMS set
                     continue
                 if self.verbose:
                     logging.info(".... Processing record: {:s}|{:s}".format(ev_id, rec_id))
@@ -305,16 +398,7 @@ class DatastoreByEvent():
                     damping=damping,
                     num_proc=num_proc
                 )
-        # Join together the intensity measure set and store to hdf5
-        if ev_id not in list(events_group):
-            event_group = events_group.create_group(ev_id)
-        else:
-            event_group = events_group[ev_id]
 
-        if self.data_provider not in list(event_group):
-            provider_group = event_group.create_group(self.data_provider)
-        else:
-            provider_group = event_group[self.data_provider]
         ims_to_array_set(intensity_measures,
                          intensity_measure_config,
                          periods, frequencies,
@@ -425,3 +509,237 @@ class DatastoreByEvent():
                 logging.info("Flatfile for IMs %s written to %s" % (key, fname))
             return
         return metadata, ims
+
+
+def parse_ims_config_from_toml(
+    ims_dict: Dict
+) -> Tuple[Dict, str, str, np.ndarray, np.ndarray, float]:
+    """Parse the intensity measures from the TOML representation
+    to the IM config required for the processing, filling in
+    defaults where necessary
+
+    Args:
+        ims_dict: Dictionary of the intensity measure config (from the TOML)
+
+    Returns:
+        ims_config: Updated configuration parameters
+        sa_units: Units for the spectral acceleration
+        fas_units: Units for the Fourier Amplitude Spectrum
+        periods: Numpy array of target periods
+        frequencies: Numpy array of target frequencies
+        damping: Damping (%) for the response spectrum acceleration
+    """
+    ims_config = {}
+    sa_dict = ims_dict.pop("SA", {})
+    if sa_dict:
+        sa_units = sa_dict.pop("units", "cm/s/s")
+        periods = sa_dict.pop("periods", DEFAULT_PERIODS)
+        damping = sa_dict.pop("damping", 0.05)
+        if not len(periods):
+            # If empty list defined then use defaults
+            periods = DEFAULT_PERIODS
+        for key, val in sa_dict.items():
+            ims_config[key] = val if val else {}
+    else:
+        sa_units = "cm/s/s"
+        periods = DEFAULT_PERIODS
+        damping = 0.05
+    fas_dict = ims_dict.pop("FAS", {})
+    if fas_dict:
+        fas_units = fas_dict.pop("units", "cm/s/s")
+        frequencies = fas_dict.pop("frequencies", DEFAULT_FREQUENCIES)
+        if not len(frequencies):
+            frequencies = DEFAULT_FREQUENCIES
+        for key, val in fas_dict.items():
+            ims_config[key] = val if val else {}
+    else:
+        fas_units = "cm/s/s"
+        frequencies = DEFAULT_FREQUENCIES
+    # Any other IMS
+    for key, val in ims_dict.items():
+        ims_config[key] = val if val else {}
+    return ims_config, sa_units, fas_units, periods, frequencies, damping
+
+
+def get_file_list(data_folder: pathlib.Path, sort: bool = True) -> List:
+    """Get the list of files within all subdirectories of the target data folder
+
+    Args:
+        data_folder: Path to find the ground motion data
+        sort: Sort the files into ascending order
+    Returns:
+        The list of files for analysis
+    """
+    assert data_folder.exists(), f"{str(data_folder)} not found"
+    file_list = []
+    for root, dirs, files in data_folder.walk():
+        for fname in files:
+            if fname.endswith(".hdf5") or fname.endswith(".asdf"):
+                file_list.append(str(root / fname))
+    if sort:
+        file_list.sort()
+    return file_list
+
+
+def event_within_times_asdf(
+        fname: str,
+        starttime: Optional[datetime] = datetime.datetime.min,
+        endtime: Optional[datetime] = datetime.datetime.max
+) -> bool:
+    """
+    For each event file check if the event falls within the selected start and
+    end time if defined
+
+    Args:
+        fname: Path to the event record ASDF
+        starttime: Earliest time for selection window
+        endtime: Latest time for selection window
+
+    Returns:
+        Event is within the time window (True) or not (False)
+    """
+    with h5py.File(fname, "r") as dstore:
+        with io.BytesIO(dstore["QuakeML"][:].tobytes().strip()) as buf:
+            catalog = read_events(buf, format="quakeml")
+    event_in_times = []
+    for ev in catalog:
+        event_time = ev.preferred_origin().time.datetime
+        event_in_times.append((event_time >= starttime) & (event_time <= endtime))
+    return any(event_in_times)
+
+
+class GMDataProcessor:
+    """Class to setup and execute ground motion data processing from a
+    user-specfied configuration
+    """
+    def __init__(
+        self,
+        data_folder: str,
+        data_store: str,
+        data_sources: List,
+        ims_config: Dict,
+        flatfile_directory: Optional[str] = None,
+        flatfile_config: Optional[Dict] = None,
+        clean: bool = True,
+        start: Optional[datetime.datetime] = None,
+        end: Optional[datetime.datetime] = None,
+        skip_existing: bool = True,
+        periods: Optional[Union[List, np.ndarray]] = DEFAULT_PERIODS,
+        frequencies: Optional[Union[List, np.ndarray]] = DEFAULT_FREQUENCIES,
+        response_spectrum_units: str = "cm/s/s",
+        fas_units: str = "cm/s/s",
+        sa_damping: float = 0.05,
+        number_processes: Optional[int] = None
+    ):
+        """
+        """
+        self.data_folder = pathlib.Path(data_folder)
+        if not self.data_folder.exists():
+            raise OSError(f"Data folder {data_folder} not found!")
+        self.data_store = pathlib.Path(data_store)
+        if clean and self.data_store.exists():
+            logging.info(f"Removing existing data store {str(self.data_store)}")
+            self.data_store.unlink()
+        self.data_sources = data_sources
+        self.ims_config = ims_config
+        self.flatfile_directory = pathlib.Path(flatfile_directory)
+        self.flatfile_config = flatfile_config
+        self.starttime = start
+        self.endtime = end
+        self.skip_existing = skip_existing
+        self.periods = periods
+        self.frequencies = frequencies
+        self.response_spectrum_units = response_spectrum_units
+        self.fas_units = fas_units
+        self.sa_damping = sa_damping
+        self.number_processes = number_processes if number_processes else cpu_count()
+        logging.info(str(self))
+
+    def __repr__(self):
+        dsource_string = ", ".join(self.data_sources)
+        return f"Event-by-Event Data processor for {str(self.data_folder)}" +\
+            f"\n---- Data sources: {dsource_string}"
+
+    @classmethod
+    def from_toml_config(cls, config_file: str, clean: bool = True):
+        """Instantiate the class from a TOML config file
+
+        Args:
+            config_file: Path to the TOML config
+            clean: Removes an existing datastore
+        """
+        with open(config_file, "rb") as f:
+            config = tomllib.load(f)
+        ims_config, sa_units, fas_units, periods, frequencies, sa_damping = \
+            parse_ims_config_from_toml(config["process"]["ims"])
+        # Flatfile config
+        flatfile_config = config["process"].get("flatfile", {})
+        if flatfile_config:
+            flatfile_directory = flatfile_config.pop("flatfile_directory", None)
+            flatfile_config["periods"] = flatfile_config.get("periods", periods)
+            flatfile_config["frequencies"] = flatfile_config.get("frequencies", frequencies)
+        else:
+            flatfile_directory = None
+            flatfile_config = None
+        return cls(
+            data_folder=config["process"]["data_folder"],
+            data_store=config["process"]["data_store"],
+            data_sources=config["process"]["data_sources"],
+            ims_config=ims_config,
+            flatfile_directory=flatfile_directory,
+            flatfile_config=flatfile_config,
+            clean=clean,
+            start=config["process"].get("start", None),
+            end=config["process"].get("end", None),
+            skip_existing=config["process"].get("skip_existing", True),
+            periods=periods,
+            frequencies=frequencies,
+            response_spectrum_units=sa_units,
+            fas_units=fas_units,
+            sa_damping=sa_damping,
+            number_processes=config["process"].get("number_processes", None)
+        )
+
+    def run(self, verbose: bool = True):
+        """Run the data processing
+
+        Args:
+            verbose: Provide event-by-event logging
+        """
+
+        initial_file_list = get_file_list(self.data_folder, sort=True)
+        logging.info(f"Found {len(initial_file_list)} files in {str(self.data_folder)}")
+        if self.starttime or self.endtime:
+            # Can filter to just the subset of files within the time limit
+            file_list = []
+            for fname in initial_file_list:
+                if event_within_times_asdf(fname, self.starttime, self.endtime):
+                    file_list.append(fname)
+        else:
+            file_list = initial_file_list
+        for provider in self.data_sources:
+            logging.info(f"Adding events from data source: {provider}")
+            dstore = DatastoreByEvent(str(self.data_store), provider, verbose)
+            dstore.add_events(file_list,
+                              self.ims_config,
+                              self.periods,
+                              self.frequencies,
+                              response_spectrum_units=self.response_spectrum_units,
+                              fas_units=self.fas_units,
+                              damping=self.sa_damping,
+                              num_proc=self.number_processes,
+                              skip_existing=self.skip_existing,
+                              )
+        logging.info(f"All events added to {str(self.data_store)}")
+        if self.flatfile_directory:
+            logging.info("Building flatfiles")
+            # Build the flatfile
+            dstore.build_flatfile(
+                self.flatfile_config["horizontal_definitions"],
+                data_sources=self.data_sources,
+                output_dir=str(self.flatfile_directory),
+                periods=self.flatfile_config["periods"],
+                frequencies=self.flatfile_config["frequencies"]
+            )
+        logging.info(f"Saved flatfiles in {str(self.flatfile_directory)}")
+        return
