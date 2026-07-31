@@ -22,6 +22,19 @@ import dynamicgmm.process.intensity_measures as ims
 logging.basicConfig(level=logging.INFO)
 
 
+def extract_event_ids(fname: str) -> List:
+    """Retreive the event IDs from an ASDF file
+    """
+    dstore = h5py.File(fname, "r")
+    with io.BytesIO(dstore["QuakeML"][:].tobytes().strip()) as buf:
+        catalog = read_events(buf, format="quakeml")
+    event_ids = []
+    for eq in catalog:
+        event_ids.append(eq.resource_id.id.split("event_id=")[1])
+    dstore.close()
+    return event_ids
+
+
 class ASDFEventHandler():
     """Class to manage access and processing of ground motion data stored in
     ASDF format
