@@ -164,6 +164,7 @@ METADATA_MIN_ITEMSIZE = {
     "network": 6,
     "station": 8,
     "channel": 3,
+    "station": 10,
     "station_id": 16,
     "station_code": 10,
     "station_name": 120,
