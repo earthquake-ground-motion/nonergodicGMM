@@ -66,7 +66,7 @@ class ASDFEventHandler():
         "high_cut_frequency_hz": "high_cut_freq",
         "filter_type": "filter_type",
         "filter_order": "filter_order",
-        "class": "class",
+        "class": "classification",
         }
 
     def __init__(self, fname: str, calculate_response_spectrum: bool = True,
