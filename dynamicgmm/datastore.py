@@ -155,6 +155,14 @@ def ims_to_array_set(
 # This avoids pandas.HDFStore raising an error if appending a new metadata
 # table to an existing one but one of the text columns in the new table has
 # an entry longer than the maximum entry of the original table
+
+METADATA_NUMERIC_COLUMNS = ["event_longitude", "event_latitude", "event_hypo_depth",
+                            "event_preferred_mag", "station_longitude", "station_latitude",
+                            "station_depth", "repi", "rhypo", "rjb", "rrup", "rx", "ry0",
+                            "vs30", "vs30_topography", "vs30_vs_profile", "low_cut_freq",
+                            "high_cut_freq", "filter_order"]
+
+
 METADATA_MIN_ITEMSIZE = {
     "event_id": 60,
     "event_time": 30,
@@ -162,15 +170,16 @@ METADATA_MIN_ITEMSIZE = {
     "event_preferred_mag_type": 12,
     "event_preferred_mag_author": 80,
     "network": 6,
-    "station": 8,
-    "channel": 3,
     "station": 10,
+    "channel": 3,
+    "location": 10,
+    "focal_mechanism": 10,
     "station_id": 16,
     "station_code": 10,
     "station_name": 120,
     "filter_type": 20,
-    "class": 10,
-    "record_id": 76
+    "classification": 10,
+    "record_id": 80
 }
 
 
@@ -269,6 +278,7 @@ class DatastoreByEvent():
                 )
                 event_metadata = self.event_metadata_from_asdf(handler, verbose=self.verbose)
                 event_id = list(handler.events)[0]
+                # import pdb; pdb.set_trace()
                 with pd.HDFStore(self.dbname, mode="a") as store:
                     key = f"events/{event_id}/{self.data_provider}/metadata"
                     if key in store:
@@ -336,6 +346,8 @@ class DatastoreByEvent():
         metadata = pd.DataFrame(metadata)
         if metadata.duplicated("record_id").any():
             metadata.drop_duplicates("record_id", inplace=True, ignore_index=True)
+        for col in METADATA_NUMERIC_COLUMNS:            # Force numerical columns
+            metadata[col] = pd.to_numeric(metadata[col], errors="coerce").astype(float)
         return metadata
 
     def intensity_measures_from_asdf(
