@@ -72,6 +72,13 @@ def ims_to_array_set(
     scalar_dtypes = np.dtype([(key, float) for key in scalar_ims])
     output["scalar_ims"] = np.zeros(nrec, scalar_dtypes)
     for i, (record_id, im_set) in enumerate(im_record_set.items()):
+        if not im_set:
+            # Record processing had failed - set values to NaN
+            for i_m in (response_spectra_ims + fas_ims):
+                output[i_m][i, :] = np.nan
+            for i_m in scalar_ims:
+                output["scalar_ims"][i_m][i] = np.nan
+            continue
         for i_m, values in im_set.items():
             if i_m in response_spectra_ims:
                 output[i_m][i, 0] = values["PGV"]
@@ -399,18 +406,24 @@ class DatastoreByEvent():
                     continue
                 if self.verbose:
                     logging.info(".... Processing record: {:s}|{:s}".format(ev_id, rec_id))
-                intensity_measures[rec_id] = get_im_set_from_record(
-                    rec,
-                    intensity_measure_config,
-                    periods,
-                    frequencies,
-                    response_spectrum_units=response_spectrum_units,
-                    fas_units=fas_units,
-                    significant_duration_definition=significant_duration_definition,
-                    cav_threshold=cav_threshold,
-                    damping=damping,
-                    num_proc=num_proc
-                )
+                try:
+                    intensity_measures[rec_id] = get_im_set_from_record(
+                        rec,
+                        intensity_measure_config,
+                        periods,
+                        frequencies,
+                        response_spectrum_units=response_spectrum_units,
+                        fas_units=fas_units,
+                        significant_duration_definition=significant_duration_definition,
+                        cav_threshold=cav_threshold,
+                        damping=damping,
+                        num_proc=num_proc
+                    )
+                except ValueError as ve:
+                    logging.info(f"Processing failed for event {ev_id}, record {rec_id}")
+                    logging.info(f"Error Message: {str(ve)}")
+                    intensity_measures[rec_id] = {}
+
 
         ims_to_array_set(intensity_measures,
                          intensity_measure_config,
