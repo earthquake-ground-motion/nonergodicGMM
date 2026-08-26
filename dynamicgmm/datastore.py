@@ -424,7 +424,6 @@ class DatastoreByEvent():
                     logging.info(f"Error Message: {str(ve)}")
                     intensity_measures[rec_id] = {}
 
-
         ims_to_array_set(intensity_measures,
                          intensity_measure_config,
                          periods, frequencies,
@@ -535,6 +534,30 @@ class DatastoreByEvent():
                 logging.info("Flatfile for IMs %s written to %s" % (key, fname))
             return
         return metadata, ims
+
+    def merge(self, datastore, overwrite: bool = False, verbose: bool = True):
+        """Merges the events from a second datastore into the current one
+        """
+        fle = h5py.File(self.dbname, "a")
+        fle2 = h5py.File(datastore.dbname, "r")
+        current_events = list(fle["events"])
+        new_events = list(fle2["events"])
+        for ev_id in new_events:
+            if (ev_id in current_events):
+                if overwrite:
+                    # Replace the event in the current file
+                    del fle[f"events/{ev_id}"]
+                else:
+                    raise ValueError(f"Event ID {ev_id} already in current file "
+                                     "to replace this set overwrite=True")
+            fle2["events"].copy(ev_id, fle["events"])
+            if verbose:
+                logging.info(
+                    f"Event {ev_id} from {datastore.dbname} copied into {self.dbname}"
+                )
+        fle.close()
+        fle2.close()
+        return
 
 
 def parse_ims_config_from_toml(
