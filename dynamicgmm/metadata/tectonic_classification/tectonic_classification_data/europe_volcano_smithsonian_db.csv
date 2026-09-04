@@ -1,0 +1,26 @@
+Volcano Name,Volcano Number,Country,Volcanic Region Group,Volcanic Region,Volcano Landform,Primary Volcano Type,Activity Evidence,Last Known Eruption,Latitude,Longitude,Elevation (m),Tectonic Setting,Dominant Rock Type
+West Eifel Volcanic Field,210010,Germany,European Volcanic Regions,Central European Volcanic Province,Cluster,Volcanic field,Eruption Dated,8300 BCE,50.17,6.85,600,Rift zone / Continental crust (>25 km),Foidite
+Chaine des Puys,210020,France,European Volcanic Regions,Western European Volcanic Province,Cluster,Lava dome(s),Eruption Dated,4040 BCE,45.786,2.981,1464,Rift zone / Continental crust (>25 km),Basalt / Picro-Basalt
+Olot Volcanic Field,210030,Spain,European Volcanic Regions,Western European Volcanic Province,Cluster,Volcanic field,Evidence Credible,Unknown,42.17,2.53,893,Intraplate / Continental crust (>25 km),Trachybasalt / Tephrite Basanite
+Calatrava Volcanic Field,210040,Spain,European Volcanic Regions,Western European Volcanic Province,Cluster,Volcanic field,Eruption Dated,3600 BCE,38.87,-4.02,1117,Intraplate / Continental crust (>25 km),Basalt / Picro-Basalt
+Colli Albani,211004,Italy,European Volcanic Regions,Italian Peninsula Volcanic Provinces,Caldera,Caldera,Evidence Uncertain,Unknown,41.7569,12.7251,949,Subduction zone / Continental crust (>25 km),Foidite
+Campi Flegrei,211010,Italy,European Volcanic Regions,Italian Peninsula Volcanic Provinces,Caldera,Caldera,Eruption Observed,1538 CE,40.827,14.139,458,Subduction zone / Continental crust (>25 km),Trachyte / Trachydacite
+Vesuvius,211020,Italy,European Volcanic Regions,Italian Peninsula Volcanic Provinces,Composite,Stratovolcano,Eruption Observed,1944 CE,40.821,14.426,1281,Subduction zone / Continental crust (>25 km),Phono-tephrite /  Tephri-phonolite
+Ischia,211030,Italy,European Volcanic Regions,Italian Peninsula Volcanic Provinces,Composite,Complex,Eruption Observed,1302 CE,40.73,13.897,789,Subduction zone / Continental crust (>25 km),Trachyte / Trachydacite
+Palinuro,211031,Italy,European Volcanic Regions,Aeolian Volcanic Arc,Composite,Compound,Eruption Dated,8040 BCE,39.48,14.83,-70,Subduction zone / Continental crust (>25 km),Phonolite
+Stromboli,211040,Italy,European Volcanic Regions,Aeolian Volcanic Arc,Composite,Stratovolcano,Eruption Observed,2026 CE,38.789,15.213,924,Subduction zone / Continental crust (>25 km),Trachyandesite / Basaltic Trachyandesite
+Panarea,211041,Italy,European Volcanic Regions,Aeolian Volcanic Arc,Composite,Stratovolcano,Evidence Uncertain,Unknown,38.638,15.064,399,Subduction zone / Continental crust (>25 km),Andesite / Basaltic Andesite
+Lipari,211042,Italy,European Volcanic Regions,Aeolian Volcanic Arc,Composite,Stratovolcano(es),Eruption Dated,1230 CE,38.49,14.933,590,Subduction zone / Continental crust (>25 km),Rhyolite
+Vulcano,211050,Italy,European Volcanic Regions,Aeolian Volcanic Arc,Composite,Stratovolcano(es),Eruption Observed,1890 CE,38.404,14.962,500,Subduction zone / Continental crust (>25 km),Trachybasalt / Tephrite Basanite
+Etna,211060,Italy,European Volcanic Regions,Sicily Volcanic Province,Composite,Stratovolcano(es),Eruption Observed,2026 CE,37.748,14.999,3357,Subduction zone / Continental crust (>25 km),Trachybasalt / Tephrite Basanite
+Campi Flegrei del Mar di Sicilia,211070,Italy,European Volcanic Regions,Sicily Volcanic Province,Cluster,Volcanic field,Eruption Observed,1867 CE,37.1,12.7,-8,Rift zone / Continental crust (>25 km),Trachybasalt / Tephrite Basanite
+Pantelleria,211071,Italy,European Volcanic Regions,Sicily Volcanic Province,Shield,Shield,Eruption Observed,1891 CE,36.77,12.02,836,Rift zone / Continental crust (>25 km),Rhyolite
+Marsili,211080,Italy,European Volcanic Regions,Aeolian Volcanic Arc,Composite,Complex,Eruption Dated,1050 BCE,39.284,14.399,-779,,
+Methana,212020,Greece,European Volcanic Regions,Hellenic Volcanic Arc,Minor (Basaltic),Lava dome(s),Eruption Observed,258 BCE,37.6186,23.3331,380,Subduction zone / Continental crust (>25 km),Andesite / Basaltic Andesite
+Milos,212030,Greece,European Volcanic Regions,Hellenic Volcanic Arc,Composite,Stratovolcano(es),Eruption Dated,140 CE,36.699,24.439,751,Subduction zone / Continental crust (>25 km),Rhyolite
+Santorini,212040,Greece,European Volcanic Regions,Hellenic Volcanic Arc,Shield,Shield(s),Eruption Observed,1950 CE,36.404,25.396,367,Subduction zone / Continental crust (>25 km),Dacite
+Kolumbo,212042,Greece,European Volcanic Regions,Hellenic Volcanic Arc,Cluster,Complex,Eruption Dated,1650 CE,36.524,25.483,-18,,
+Nisyros,212050,Greece,European Volcanic Regions,Hellenic Volcanic Arc,Composite,Stratovolcano,Eruption Observed,1888 CE,36.5888,27.1553,698,Subduction zone / Continental crust (>25 km),Dacite
+Kula,213000,Turkiye,European Volcanic Regions,Western Anatolian Volcanic Province,Cluster,Volcanic field,Evidence Credible,Unknown,38.58,28.52,750,Intraplate / Continental crust (>25 km),Trachybasalt / Tephrite Basanite
+Hasandag-Keciboyduran Volcanic Complex,213002,Turkiye,European Volcanic Regions,Western Anatolian Volcanic Province,Cluster,Stratovolcano,Evidence Credible,Unknown,38.13,34.17,3253,Intraplate / Continental crust (>25 km),Dacite
+Erciyes Volcanic Complex,213010,Turkiye,European Volcanic Regions,Western Anatolian Volcanic Province,Composite,Stratovolcano,Eruption Dated,6880 BCE,38.531,35.447,3864,Intraplate / Continental crust (>25 km),Dacite
