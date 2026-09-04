@@ -18,6 +18,7 @@ dependencies = [
     "numexpr",
     "Rtree",
     "obspy",
+    "scikit-gstat"
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -43,13 +44,29 @@ dev = [
     "mypy>=1.0.0",
 ]
 
+pymc = [
+    "arviz[netcdf4, matplotlib]",
+    "xarray[complete]",
+    "pymc>=6.0.0",
+]
+
+gp = [
+    "torch",
+    "gpytorch",
+]
+
+user = [
+    "jupyter",
+    "contextily"
+]
+
 docs = [
     "pdoc>=14.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/g-weatherill/nonergodicGMM"
-Issues = "https://github.com/g-weatherill/nonergodicGMM/issues"
+Homepage = "https://github.com/earthquake-ground-motion/nonergodicGMM"
+Issues = "https://github.com/earthquake-ground-motion/nonergodicGMM/issues"
 
 [tool.setuptools.packages.find]
 include = ["dynamicgmm"]
